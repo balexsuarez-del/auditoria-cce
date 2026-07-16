@@ -1,190 +1,327 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Auditoría CCE · enerBit</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
+/* ============================================================================
+   TOKENS — paleta de marca enerBit
+============================================================================ */
+:root {
+  --purple-900: #3A1259;
+  --purple-700: #501C7C;
+  --purple-500: #7028AE;
+  --purple-100: #F3E8FF;
+  --orange-500: #FF7900;
+  --orange-100: #FFEDD5;
 
-<!-- Modal: identificación de usuario + PIN de acceso -->
-<div id="modalUsuario" class="modal-overlay">
-  <div class="modal-card">
-    <div class="modal-brand">
-      <span class="brand-mark">eB</span>
-      <div>
-        <h1>Auditoría CCE</h1>
-        <p>enerBit S.A. ESP</p>
-      </div>
-    </div>
-    <p class="modal-copy">Ingresa tu nombre y el PIN de acceso del equipo.</p>
-    <input id="inputUsuario" type="text" placeholder="Tu nombre, ej: Alex Mariano" maxlength="60" autocomplete="off">
-    <input id="inputPin" type="password" placeholder="PIN de acceso" maxlength="40" autocomplete="off">
-    <p id="authError" class="modal-error" style="display:none;"></p>
-    <button id="btnEntrar" class="btn btn-primary btn-block">Entrar</button>
-  </div>
-</div>
+  --green-600: #039855;
+  --green-100: #D1FAE5;
+  --blue-600: #444CE7;
+  --blue-100: #EEF2FF;
+  --red-600: #D92D20;
+  --red-100: #FEE2E2;
+  --amber-700: #92400E;
+  --amber-100: #FEF3C7;
 
-<div class="app-shell">
+  --ink-900: #1A1F2B;
+  --ink-700: #344055;
+  --ink-500: #667085;
+  --ink-300: #D0D5DD;
+  --ink-100: #F2F4F7;
+  --paper: #FFFFFF;
+  --canvas: #F9FAFB;
 
-  <!-- Barra lateral -->
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <span class="brand-mark">eB</span>
-      <span class="brand-name">Auditoría CCE</span>
-    </div>
-    <nav class="sidebar-nav">
-      <button class="nav-item is-active" data-view="dashboard">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 13h4v8H3v-8Zm7-9h4v17h-4V4Zm7 5h4v12h-4V9Z" fill="currentColor"/></svg>
-        Dashboard
-      </button>
-      <button class="nav-item" data-view="datos">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 5h18v4H3V5Zm0 6h18v4H3v-4Zm0 6h18v4H3v-4Z" fill="currentColor"/></svg>
-        Datos completos
-      </button>
-      <button class="nav-item" data-view="desacuerdos">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2 1 21h22L12 2Zm0 6.5 6.2 10.8H5.8L12 8.5ZM11 11v4h2v-4h-2Zm0 5.5v2h2v-2h-2Z" fill="currentColor"/></svg>
-        Desacuerdos T≠U
-      </button>
-    </nav>
-    <div class="sidebar-footer">
-      <div class="sync-indicator" id="syncIndicator">
-        <span class="sync-dot"></span>
-        <span id="syncText">Conectando…</span>
-      </div>
-      <div class="usuario-actual" id="usuarioActualLabel"></div>
-    </div>
-  </aside>
+  --radius: 10px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(58, 18, 89, 0.08);
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
 
-  <!-- Contenido principal -->
-  <main class="main">
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  background: var(--canvas);
+  color: var(--ink-700);
+  -webkit-font-smoothing: antialiased;
+}
 
-    <!-- Vista: Dashboard -->
-    <section id="view-dashboard" class="view is-active">
-      <header class="view-header">
-        <div>
-          <h2>Resumen ejecutivo</h2>
-          <p class="view-subtitle" id="tituloActualizacion">Cargando datos…</p>
-        </div>
-        <button class="btn btn-ghost" id="btnRefrescar">↻ Actualizar ahora</button>
-      </header>
+/* ============================================================================
+   LAYOUT GENERAL
+============================================================================ */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
 
-      <div class="kpi-grid">
-        <div class="kpi-card kpi-neutral">
-          <span class="kpi-label">Total actas</span>
-          <span class="kpi-value" id="kpiTotal">–</span>
-        </div>
-        <div class="kpi-card kpi-green">
-          <span class="kpi-label">Conformes (Manual)</span>
-          <span class="kpi-value" id="kpiConformesManual">–</span>
-        </div>
-        <div class="kpi-card kpi-red">
-          <span class="kpi-label">No conformes (Manual)</span>
-          <span class="kpi-value" id="kpiNoConformesManual">–</span>
-        </div>
-        <div class="kpi-card kpi-blue">
-          <span class="kpi-label">Conformes (IA)</span>
-          <span class="kpi-value" id="kpiConformesIA">–</span>
-        </div>
-        <div class="kpi-card kpi-red">
-          <span class="kpi-label">No conformes (IA)</span>
-          <span class="kpi-value" id="kpiNoConformesIA">–</span>
-        </div>
-        <div class="kpi-card kpi-amber">
-          <span class="kpi-label">Desacuerdos T≠U</span>
-          <span class="kpi-value" id="kpiDesacuerdos">–</span>
-        </div>
-      </div>
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, var(--purple-900), var(--purple-700));
+  color: white;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
 
-      <div class="panel-grid">
-        <div class="panel">
-          <h3>Conformidad por aliado</h3>
-          <div id="chartAliados" class="chart-bars"></div>
-        </div>
-        <div class="panel">
-          <h3>Score promedio por tipo de medida</h3>
-          <div id="chartTipoMedida" class="chart-bars"></div>
-        </div>
-      </div>
-    </section>
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 22px;
+}
 
-    <!-- Vista: Datos completos -->
-    <section id="view-datos" class="view">
-      <header class="view-header">
-        <div>
-          <h2>Datos completos</h2>
-          <p class="view-subtitle" id="datosSubtitle">–</p>
-        </div>
-        <div class="header-actions">
-          <input type="file" id="inputExcel" accept=".xlsx,.xls" hidden>
-          <button class="btn btn-ghost" id="btnImportarExcel">📤 Importar desde Excel</button>
-          <button class="btn btn-primary" id="btnNuevaActa">+ Nueva acta</button>
-        </div>
-      </header>
+.brand-mark {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  background: var(--orange-500);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
 
-      <div class="toolbar">
-        <input type="search" id="filtroTexto" placeholder="Buscar por aliado, técnico, serie, ciudad…">
-        <select id="filtroAliado"><option value="">Todos los aliados</option></select>
-        <select id="filtroSupervision">
-          <option value="">Manual: todos</option>
-          <option value="CONFORME">Manual: CONFORME</option>
-          <option value="NO CONFORMIDAD">Manual: NO CONFORMIDAD</option>
-          <option value="PENDIENTE">Manual: PENDIENTE</option>
-        </select>
-      </div>
+.brand-name {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
 
-      <div class="table-wrap">
-        <table class="data-table" id="tablaDatos">
-          <thead></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+.sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
 
-    <!-- Vista: Desacuerdos -->
-    <section id="view-desacuerdos" class="view">
-      <header class="view-header">
-        <div>
-          <h2>Desacuerdos Supervisión Manual ≠ IA</h2>
-          <p class="view-subtitle" id="desacuerdosSubtitle">–</p>
-        </div>
-      </header>
-      <div class="table-wrap">
-        <table class="data-table" id="tablaDesacuerdos">
-          <thead>
-            <tr>
-              <th>#</th><th>Aliado</th><th>Técnico</th><th>Serie</th><th>Tipo</th>
-              <th>Score</th><th>Manual</th><th>IA</th><th>Fallos detectados</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.75);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+.nav-item.is-active { background: rgba(255,255,255,0.14); color: white; }
+.nav-item svg { flex-shrink: 0; opacity: 0.9; }
 
-  </main>
-</div>
+.sidebar-footer { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12); }
 
-<!-- Modal: crear / editar acta -->
-<div id="modalActa" class="modal-overlay">
-  <div class="modal-card modal-card-wide">
-    <h2 id="modalActaTitulo">Nueva acta</h2>
-    <form id="formActa" class="form-grid"></form>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" id="btnCancelarActa">Cancelar</button>
-      <button type="submit" form="formActa" class="btn btn-primary" id="btnGuardarActa">Guardar</button>
-    </div>
-  </div>
-</div>
+.sync-indicator { display: flex; align-items: center; gap: 7px; font-size: 12px; color: rgba(255,255,255,0.7); }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-300); flex-shrink: 0; }
+.sync-dot.is-live { background: #12B76A; box-shadow: 0 0 0 3px rgba(18,183,106,0.25); }
+.sync-dot.is-error { background: var(--red-600); }
+.sync-dot.is-saving { background: var(--orange-500); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-<div id="toastContainer" class="toast-container"></div>
+.usuario-actual { font-size: 12px; color: rgba(255,255,255,0.6); }
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
-</body>
-</html>
+.main { flex: 1; padding: 28px 32px 60px; max-width: 1400px; }
+
+.view { display: none; }
+.view.is-active { display: block; animation: fadeIn 0.2s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.view-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
+}
+.view-header h2 { margin: 0 0 4px; font-size: 21px; font-weight: 700; color: var(--ink-900); }
+.view-subtitle { margin: 0; font-size: 13px; color: var(--ink-500); }
+.header-actions { display: flex; gap: 10px; }
+
+/* Modal de progreso de importación */
+.import-summary { font-size: 13px; line-height: 1.7; color: var(--ink-700); }
+.import-summary b { color: var(--ink-900); }
+
+/* ============================================================================
+   BOTONES
+============================================================================ */
+.btn {
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: filter 0.15s, background 0.15s;
+}
+.btn-primary { background: var(--purple-700); color: white; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-ghost { background: white; color: var(--ink-700); border-color: var(--ink-300); }
+.btn-ghost:hover { background: var(--ink-100); }
+.btn-block { width: 100%; }
+.btn-icon { padding: 6px 9px; font-size: 13px; }
+
+/* ============================================================================
+   KPI CARDS
+============================================================================ */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.kpi-card {
+  background: var(--paper);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  border-left: 4px solid var(--ink-300);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.kpi-label { font-size: 12px; color: var(--ink-500); font-weight: 500; }
+.kpi-value { font-size: 26px; font-weight: 800; color: var(--ink-900); font-family: var(--font-mono); }
+.kpi-neutral { border-left-color: var(--purple-500); }
+.kpi-green { border-left-color: var(--green-600); }
+.kpi-green .kpi-value { color: var(--green-600); }
+.kpi-red { border-left-color: var(--red-600); }
+.kpi-red .kpi-value { color: var(--red-600); }
+.kpi-blue { border-left-color: var(--blue-600); }
+.kpi-blue .kpi-value { color: var(--blue-600); }
+.kpi-amber { border-left-color: var(--amber-700); }
+.kpi-amber .kpi-value { color: var(--amber-700); }
+
+/* ============================================================================
+   PANELES / GRÁFICAS (barras vanilla, sin librerías)
+============================================================================ */
+.panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 900px) { .panel-grid { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--paper);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+}
+.panel h3 { margin: 0 0 14px; font-size: 14px; color: var(--ink-900); }
+
+.bar-row { display: grid; grid-template-columns: 140px 1fr 46px; align-items: center; gap: 10px; margin-bottom: 10px; }
+.bar-row .bar-label { font-size: 12.5px; color: var(--ink-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { height: 10px; background: var(--ink-100); border-radius: 6px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 6px; background: var(--purple-500); transition: width 0.4s ease; }
+.bar-fill.danger { background: var(--red-600); }
+.bar-row .bar-value { font-size: 12px; font-family: var(--font-mono); color: var(--ink-500); text-align: right; }
+
+/* ============================================================================
+   TOOLBAR / FILTROS
+============================================================================ */
+.toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar input, .toolbar select {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ink-300);
+  background: white;
+  color: var(--ink-700);
+}
+.toolbar input[type="search"] { flex: 1; min-width: 220px; }
+
+/* ============================================================================
+   TABLA
+============================================================================ */
+.table-wrap { background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: auto; max-height: 68vh; }
+.data-table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+.data-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--purple-700); color: white;
+  text-align: left; padding: 10px 12px; font-weight: 600; font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.data-table tbody td { padding: 8px 12px; border-bottom: 1px solid var(--ink-100); color: var(--ink-700); }
+.data-table tbody tr:hover { background: var(--purple-100); }
+.data-table tbody tr:nth-child(even) { background: var(--canvas); }
+.data-table tbody tr:nth-child(even):hover { background: var(--purple-100); }
+
+.badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.badge-ok, .badge-conforme { background: var(--green-100); color: var(--green-600); }
+.badge-ia { background: var(--blue-100); color: var(--blue-600); }
+.badge-falla, .badge-noconformidad, .badge-desacuerdo { background: var(--red-100); color: var(--red-600); }
+.badge-pendiente { background: var(--amber-100); color: var(--amber-700); }
+
+.row-actions { display: flex; gap: 6px; }
+
+/* ============================================================================
+   MODALES
+============================================================================ */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(26, 31, 43, 0.55);
+  align-items: center; justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+.modal-overlay.is-active { display: flex; }
+
+.modal-card {
+  background: white;
+  border-radius: 14px;
+  padding: 28px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: var(--shadow-md);
+}
+.modal-card-wide { max-width: 720px; max-height: 88vh; overflow-y: auto; }
+
+.modal-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.modal-brand h1 { font-size: 17px; margin: 0; color: var(--ink-900); }
+.modal-brand p { font-size: 12px; margin: 0; color: var(--ink-500); }
+.modal-copy { font-size: 13px; color: var(--ink-700); margin-bottom: 14px; }
+.modal-error { font-size: 12.5px; color: var(--red-600); background: var(--red-100); padding: 8px 10px; border-radius: 6px; margin: -6px 0 12px; }
+
+.modal-card input[type="text"], .modal-card input[type="number"], .modal-card select, .modal-card textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ink-300);
+  margin-bottom: 14px;
+}
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-top: 6px; }
+.form-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.form-field.span-2 { grid-column: span 2; }
+.form-field label { font-size: 12px; font-weight: 600; color: var(--ink-500); }
+
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--ink-100); }
+
+/* ============================================================================
+   TOASTS
+============================================================================ */
+.toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 100; }
+.toast {
+  background: var(--ink-900); color: white;
+  padding: 12px 16px; border-radius: 8px;
+  font-size: 13px; box-shadow: var(--shadow-md);
+  min-width: 220px; max-width: 360px;
+  animation: slideIn 0.2s ease;
+}
+.toast.toast-error { background: var(--red-600); }
+.toast.toast-success { background: var(--green-600); }
+@keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
+/* ============================================================================
+   RESPONSIVE
+============================================================================ */
+@media (max-width: 760px) {
+  .app-shell { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: relative; flex-direction: row; align-items: center; overflow-x: auto; }
+  .sidebar-nav { flex-direction: row; }
+  .sidebar-footer { display: none; }
+  .main { padding: 18px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-field.span-2 { grid-column: span 1; }
+}
+
+/* Foco visible para accesibilidad de teclado */
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--orange-500);
+  outline-offset: 2px;
+}

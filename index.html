@@ -1,11 +1,190 @@
-// ============================================================================
-// CONFIGURACIÓN — edita esta única línea después de desplegar tu Apps Script
-// ============================================================================
-const CONFIG = {
-  // Pega aquí la URL que termina en /exec que te da Apps Script al implementar
-  API_URL: 'https://script.google.com/macros/s/AKfycbxxJGa4pgKGjvMHmA4hEEakWGI2UknnKUwtpq71JR7fIu5tp2hgsY2D_f43UiUJ0dXMcw/exec',
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auditoría CCE · enerBit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 
-  // Cada cuántos milisegundos se refresca automáticamente la información
-  // para lograr colaboración "en tiempo real" entre varios usuarios.
-  POLL_INTERVAL_MS: 8000
-};
+<!-- Modal: identificación de usuario + PIN de acceso -->
+<div id="modalUsuario" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-brand">
+      <span class="brand-mark">eB</span>
+      <div>
+        <h1>Auditoría CCE</h1>
+        <p>enerBit S.A. ESP</p>
+      </div>
+    </div>
+    <p class="modal-copy">Ingresa tu nombre y el PIN de acceso del equipo.</p>
+    <input id="inputUsuario" type="text" placeholder="Tu nombre, ej: Alex Mariano" maxlength="60" autocomplete="off">
+    <input id="inputPin" type="password" placeholder="PIN de acceso" maxlength="40" autocomplete="off">
+    <p id="authError" class="modal-error" style="display:none;"></p>
+    <button id="btnEntrar" class="btn btn-primary btn-block">Entrar</button>
+  </div>
+</div>
+
+<div class="app-shell">
+
+  <!-- Barra lateral -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-mark">eB</span>
+      <span class="brand-name">Auditoría CCE</span>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item is-active" data-view="dashboard">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 13h4v8H3v-8Zm7-9h4v17h-4V4Zm7 5h4v12h-4V9Z" fill="currentColor"/></svg>
+        Dashboard
+      </button>
+      <button class="nav-item" data-view="datos">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 5h18v4H3V5Zm0 6h18v4H3v-4Zm0 6h18v4H3v-4Z" fill="currentColor"/></svg>
+        Datos completos
+      </button>
+      <button class="nav-item" data-view="desacuerdos">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2 1 21h22L12 2Zm0 6.5 6.2 10.8H5.8L12 8.5ZM11 11v4h2v-4h-2Zm0 5.5v2h2v-2h-2Z" fill="currentColor"/></svg>
+        Desacuerdos T≠U
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sync-indicator" id="syncIndicator">
+        <span class="sync-dot"></span>
+        <span id="syncText">Conectando…</span>
+      </div>
+      <div class="usuario-actual" id="usuarioActualLabel"></div>
+    </div>
+  </aside>
+
+  <!-- Contenido principal -->
+  <main class="main">
+
+    <!-- Vista: Dashboard -->
+    <section id="view-dashboard" class="view is-active">
+      <header class="view-header">
+        <div>
+          <h2>Resumen ejecutivo</h2>
+          <p class="view-subtitle" id="tituloActualizacion">Cargando datos…</p>
+        </div>
+        <button class="btn btn-ghost" id="btnRefrescar">↻ Actualizar ahora</button>
+      </header>
+
+      <div class="kpi-grid">
+        <div class="kpi-card kpi-neutral">
+          <span class="kpi-label">Total actas</span>
+          <span class="kpi-value" id="kpiTotal">–</span>
+        </div>
+        <div class="kpi-card kpi-green">
+          <span class="kpi-label">Conformes (Manual)</span>
+          <span class="kpi-value" id="kpiConformesManual">–</span>
+        </div>
+        <div class="kpi-card kpi-red">
+          <span class="kpi-label">No conformes (Manual)</span>
+          <span class="kpi-value" id="kpiNoConformesManual">–</span>
+        </div>
+        <div class="kpi-card kpi-blue">
+          <span class="kpi-label">Conformes (IA)</span>
+          <span class="kpi-value" id="kpiConformesIA">–</span>
+        </div>
+        <div class="kpi-card kpi-red">
+          <span class="kpi-label">No conformes (IA)</span>
+          <span class="kpi-value" id="kpiNoConformesIA">–</span>
+        </div>
+        <div class="kpi-card kpi-amber">
+          <span class="kpi-label">Desacuerdos T≠U</span>
+          <span class="kpi-value" id="kpiDesacuerdos">–</span>
+        </div>
+      </div>
+
+      <div class="panel-grid">
+        <div class="panel">
+          <h3>Conformidad por aliado</h3>
+          <div id="chartAliados" class="chart-bars"></div>
+        </div>
+        <div class="panel">
+          <h3>Score promedio por tipo de medida</h3>
+          <div id="chartTipoMedida" class="chart-bars"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Vista: Datos completos -->
+    <section id="view-datos" class="view">
+      <header class="view-header">
+        <div>
+          <h2>Datos completos</h2>
+          <p class="view-subtitle" id="datosSubtitle">–</p>
+        </div>
+        <div class="header-actions">
+          <input type="file" id="inputExcel" accept=".xlsx,.xls" hidden>
+          <button class="btn btn-ghost" id="btnImportarExcel">📤 Importar desde Excel</button>
+          <button class="btn btn-primary" id="btnNuevaActa">+ Nueva acta</button>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <input type="search" id="filtroTexto" placeholder="Buscar por aliado, técnico, serie, ciudad…">
+        <select id="filtroAliado"><option value="">Todos los aliados</option></select>
+        <select id="filtroSupervision">
+          <option value="">Manual: todos</option>
+          <option value="CONFORME">Manual: CONFORME</option>
+          <option value="NO CONFORMIDAD">Manual: NO CONFORMIDAD</option>
+          <option value="PENDIENTE">Manual: PENDIENTE</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="tablaDatos">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Vista: Desacuerdos -->
+    <section id="view-desacuerdos" class="view">
+      <header class="view-header">
+        <div>
+          <h2>Desacuerdos Supervisión Manual ≠ IA</h2>
+          <p class="view-subtitle" id="desacuerdosSubtitle">–</p>
+        </div>
+      </header>
+      <div class="table-wrap">
+        <table class="data-table" id="tablaDesacuerdos">
+          <thead>
+            <tr>
+              <th>#</th><th>Aliado</th><th>Técnico</th><th>Serie</th><th>Tipo</th>
+              <th>Score</th><th>Manual</th><th>IA</th><th>Fallos detectados</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Modal: crear / editar acta -->
+<div id="modalActa" class="modal-overlay">
+  <div class="modal-card modal-card-wide">
+    <h2 id="modalActaTitulo">Nueva acta</h2>
+    <form id="formActa" class="form-grid"></form>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="btnCancelarActa">Cancelar</button>
+      <button type="submit" form="formActa" class="btn btn-primary" id="btnGuardarActa">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toastContainer" class="toast-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
