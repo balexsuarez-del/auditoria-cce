@@ -7,6 +7,7 @@ const state = {
   headers: [],
   actas: [],
   kpis: null,
+  hallazgosPorAliado: [],
   usuario: localStorage.getItem('cce_usuario') || '',
   pin: localStorage.getItem('cce_pin') || '',
   filtros: { texto: '', aliado: '', supervision: '' },
@@ -104,6 +105,7 @@ async function intentarEntrar() {
     state.headers = data.headers;
     state.actas = data.actas;
     state.kpis = data.kpis;
+    state.hallazgosPorAliado = data.hallazgosPorAliado || [];
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
 
@@ -169,6 +171,7 @@ async function cargarDatos(mostrarError) {
     state.headers = data.headers;
     state.actas = data.actas;
     state.kpis = data.kpis;
+    state.hallazgosPorAliado = data.hallazgosPorAliado || [];
 
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
@@ -212,14 +215,64 @@ function renderDashboard() {
   document.getElementById('kpiNoConformesIA').textContent = k.noConformesIA;
   document.getElementById('kpiDesacuerdos').textContent = k.desacuerdos;
 
+  // Conformidad por aliado — barra de marca (púrpura), roja solo si supera 20% NC
   renderBarras('chartAliados', k.porAliado.map(a => ({
-    etiqueta: a.aliado, valor: a.pctNC, texto: (a.pctNC * 100).toFixed(1) + '%', danger: a.pctNC > 0.2
+    etiqueta: a.aliado, valor: a.pctNC, texto: (a.pctNC * 100).toFixed(1) + '%',
+    clase: a.pctNC > 0.2 ? 'danger' : 'accent'
   })), 1);
 
+  // Score por tipo de medida — púrpura de marca, rojo solo si score bajo
   const maxScore = Math.max(100, ...k.porTipoMedida.map(t => t.scoreProm));
   renderBarras('chartTipoMedida', k.porTipoMedida.map(t => ({
-    etiqueta: t.tipo, valor: t.scoreProm, texto: t.scoreProm.toFixed(1), danger: t.scoreProm < 70
+    etiqueta: t.tipo, valor: t.scoreProm, texto: t.scoreProm.toFixed(1),
+    clase: t.scoreProm < 70 ? 'danger' : ''
   })), maxScore);
+
+  // Acuerdo vs Desacuerdo (Manual vs IA)
+  const totalAcuerdo = k.acuerdos + k.desacuerdos;
+  renderBarras('chartAcuerdo', [
+    { etiqueta: 'CONFORME (T=U)', valor: k.acuerdos, texto: String(k.acuerdos), clase: 'success' },
+    { etiqueta: 'DESACUERDO (T≠U)', valor: k.desacuerdos, texto: String(k.desacuerdos), clase: 'danger' }
+  ], totalAcuerdo || 1);
+
+  // Concordancia Factor Acta (K) vs Factor Real (L) — calculado de las actas
+  const factor = calcularConcordanciaFactor();
+  renderBarras('chartFactor', [
+    { etiqueta: 'Concuerda', valor: factor.concuerda, texto: String(factor.concuerda), clase: 'success' },
+    { etiqueta: 'No concuerda', valor: factor.noConcuerda, texto: String(factor.noConcuerda), clase: 'danger' }
+  ], Math.max(factor.concuerda, factor.noConcuerda, 1));
+
+  // Hallazgos por aliado (opcional — solo si la pestaña "Hallazgos" existe)
+  const panelHallazgos = document.getElementById('panelHallazgos');
+  if (state.hallazgosPorAliado && state.hallazgosPorAliado.length) {
+    panelHallazgos.style.display = '';
+    const maxHallazgos = Math.max(...state.hallazgosPorAliado.map(h => h.hallazgos));
+    renderBarras('chartHallazgos', state.hallazgosPorAliado.map(h => ({
+      etiqueta: h.aliado, valor: h.hallazgos, texto: String(h.hallazgos), clase: 'accent'
+    })), maxHallazgos);
+  } else {
+    panelHallazgos.style.display = 'none';
+  }
+}
+
+/** Compara Factor acta (K) vs Factor real (L) en todas las actas cargadas. */
+function calcularConcordanciaFactor() {
+  let concuerda = 0, noConcuerda = 0;
+  state.actas.forEach(a => {
+    const acta = a['Factor acta (K)'];
+    const real = a['Factor real (L)'];
+    if (acta === undefined || acta === '' || real === undefined || real === '') return;
+
+    const realTexto = String(real).trim().toLowerCase();
+    if (realTexto === 'ok') { concuerda++; return; } // "ok" = el auditor confirmó que coincide
+
+    const actaNum = parseFloat(acta);
+    const realNum = parseFloat(real);
+    if (isNaN(actaNum) || isNaN(realNum)) return; // dato no comparable, se omite
+
+    if (actaNum === realNum) concuerda++; else noConcuerda++;
+  });
+  return { concuerda, noConcuerda };
 }
 
 function renderBarras(contenedorId, items, maxValor) {
@@ -231,7 +284,7 @@ function renderBarras(contenedorId, items, maxValor) {
     row.className = 'bar-row';
     row.innerHTML = `
       <span class="bar-label" title="${escapeHtml(item.etiqueta)}">${escapeHtml(item.etiqueta)}</span>
-      <span class="bar-track"><span class="bar-fill ${item.danger ? 'danger' : ''}" style="width:${pct}%"></span></span>
+      <span class="bar-track"><span class="bar-fill ${item.clase || ''}" style="width:${pct}%"></span></span>
       <span class="bar-value">${item.texto}</span>`;
     cont.appendChild(row);
   });
@@ -317,16 +370,17 @@ function parsearExcelActas(file) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-        // Busca una hoja cuyo nombre contenga "Datos Completos" (tolera el
-        // emoji/prefijo); si no la encuentra, usa la primera hoja.
-        const nombreHoja = workbook.SheetNames.find(n => n.includes('Datos Completos')) || workbook.SheetNames[0];
-        const hoja = workbook.Sheets[nombreHoja];
-        const filas = XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: '' });
-
-        // Localiza la fila de encabezados: la primera cuyo valor en A sea "#"
-        const idxEncabezado = filas.findIndex(f => String(f[0]).trim() === '#');
-        if (idxEncabezado === -1) {
-          throw new Error('No se encontró la fila de encabezados ("#") en la hoja "' + nombreHoja + '".');
+        // Busca, entre TODAS las hojas del archivo, la primera que tenga una
+        // fila cuya columna A sea exactamente "#" — así funciona sin importar
+        // cómo se llame la pestaña (Datos Completos, Auditoria IA=Manual, etc.).
+        let nombreHoja = null, idxEncabezado = -1, filas = null;
+        for (const nombre of workbook.SheetNames) {
+          const candidatas = XLSX.utils.sheet_to_json(workbook.Sheets[nombre], { header: 1, raw: true, defval: '' });
+          const idx = candidatas.findIndex(f => String(f[0]).trim() === '#');
+          if (idx !== -1) { nombreHoja = nombre; idxEncabezado = idx; filas = candidatas; break; }
+        }
+        if (!filas) {
+          throw new Error('No se encontró ninguna hoja con una fila de encabezados que empiece en "#".');
         }
         const encabezados = filas[idxEncabezado].map(h => String(h || '').trim());
 
