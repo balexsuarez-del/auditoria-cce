@@ -54,6 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
   configurarModalActa();
   configurarFiltros();
   configurarAsistente();
+  configurarSelectoresVista();
+  configurarSelectorColumnas();
+  configurarVistas();
+  aplicarVisibilidadPaneles();
 
   document.getElementById('btnRefrescar').addEventListener('click', () => cargarDatos(true));
 
@@ -545,18 +549,17 @@ function renderDashboard() {
   document.getElementById('kpiNoConformesIA').textContent = k.noConformesIA;
   document.getElementById('kpiDesacuerdos').textContent = k.desacuerdos;
 
-  renderDona('chartDona', [
-    { etiqueta: 'Conforme', valor: k.conformesManual, color: 'var(--green-600)' },
-    { etiqueta: 'No conforme', valor: k.noConformesManual, color: 'var(--red-600)' },
-    { etiqueta: 'Pendiente', valor: k.pendientesManual, color: 'var(--amber-700)' }
-  ], k.total);
+  renderPanelFlexible('chartDona', [
+    { etiqueta: 'Conforme', valor: k.conformesManual, clase: 'success' },
+    { etiqueta: 'No conforme', valor: k.noConformesManual, clase: 'danger' },
+    { etiqueta: 'Pendiente', valor: k.pendientesManual, clase: 'accent' }
+  ], 'dona');
 
   renderLineaTendencia('chartLinea', calcularActasPorMes());
 
-  renderBarraApilada('chartApilada', k.porTipoMedida.map((t, i) => ({
-    etiqueta: t.tipo, valor: t.actas,
-    color: ['var(--purple-500)', 'var(--orange-500)', 'var(--blue-600)'][i % 3]
-  })));
+  renderPanelFlexible('chartApilada', k.porTipoMedida.map((t, i) => ({
+    etiqueta: t.tipo, valor: t.actas, clase: ['', 'accent', 'success'][i % 3]
+  })), 'apilada');
 
   // Conformidad por aliado — barra de marca (púrpura), roja solo si supera 20% NC
   renderBarras('chartAliados', k.porAliado.map(a => ({
@@ -572,18 +575,17 @@ function renderDashboard() {
   })), maxScore);
 
   // Acuerdo vs Desacuerdo (Manual vs IA)
-  const totalAcuerdo = k.acuerdos + k.desacuerdos;
-  renderBarras('chartAcuerdo', [
-    { etiqueta: 'CONFORME (T=U)', valor: k.acuerdos, texto: String(k.acuerdos), clase: 'success' },
-    { etiqueta: 'DESACUERDO (T≠U)', valor: k.desacuerdos, texto: String(k.desacuerdos), clase: 'danger' }
-  ], totalAcuerdo || 1);
+  renderPanelFlexible('chartAcuerdo', [
+    { etiqueta: 'CONFORME (T=U)', valor: k.acuerdos, clase: 'success' },
+    { etiqueta: 'DESACUERDO (T≠U)', valor: k.desacuerdos, clase: 'danger' }
+  ], 'barras');
 
   // Concordancia Factor Acta (K) vs Factor Real (L) — calculado de las actas
   const factor = calcularConcordanciaFactor();
-  renderBarras('chartFactor', [
-    { etiqueta: 'Concuerda', valor: factor.concuerda, texto: String(factor.concuerda), clase: 'success' },
-    { etiqueta: 'No concuerda', valor: factor.noConcuerda, texto: String(factor.noConcuerda), clase: 'danger' }
-  ], Math.max(factor.concuerda, factor.noConcuerda, 1));
+  renderPanelFlexible('chartFactor', [
+    { etiqueta: 'Concuerda', valor: factor.concuerda, clase: 'success' },
+    { etiqueta: 'No concuerda', valor: factor.noConcuerda, clase: 'danger' }
+  ], 'barras');
 
   // Hallazgos por aliado (opcional — solo si la pestaña "Hallazgos" existe)
   const panelHallazgos = document.getElementById('panelHallazgos');
@@ -591,10 +593,9 @@ function renderDashboard() {
     panelHallazgos.style.display = '';
     const porAliado = hallazgosPorAliadoFiltrados();
     if (porAliado.length) {
-      const maxHallazgos = Math.max(...porAliado.map(h => h.hallazgos));
-      renderBarras('chartHallazgos', porAliado.map(h => ({
-        etiqueta: h.aliado, valor: h.hallazgos, texto: String(h.hallazgos), clase: 'accent'
-      })), maxHallazgos);
+      renderPanelFlexible('chartHallazgos', porAliado.map(h => ({
+        etiqueta: h.aliado, valor: h.hallazgos, clase: 'accent'
+      })), 'barras');
     } else {
       renderBarras('chartHallazgos', [], 1);
     }
@@ -705,7 +706,7 @@ function renderDona(contenedorId, segmentos, total) {
       ${escapeHtml(s.etiqueta)}: <b>${s.valor}</b> (${suma ? ((s.valor / suma) * 100).toFixed(0) : 0}%)
     </span>`).join('');
 
-  cont.innerHTML = svg + `<div class="chart-leyenda">${leyenda}</div>`;
+  cont.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">${svg}<div class="chart-leyenda">${leyenda}</div></div>`;
 }
 
 /** Agrupa las actas cargadas por mes (YYYY-MM) y cuenta cuántas hay en cada uno. */
@@ -781,6 +782,157 @@ function renderBarraApilada(contenedorId, segmentos) {
   cont.innerHTML = `<div class="apilada-track">${track}</div><div class="chart-leyenda">${leyenda}</div>`;
 }
 
+// ============================================================================
+// SELECTOR DE VISTA (Barras / Dona / Barra apilada) — recuerda la elección
+// ============================================================================
+const COLOR_MAP = {
+  '': 'var(--purple-500)', accent: 'var(--orange-500)',
+  success: 'var(--green-600)', danger: 'var(--red-600)'
+};
+
+function obtenerVistaGuardada(contenedorId, porDefecto) {
+  return localStorage.getItem('cce_vista_' + contenedorId) || porDefecto;
+}
+
+/**
+ * Dibuja "datos" (formato común [{etiqueta, valor, clase}]) como Barras, Dona
+ * o Barra apilada, según lo que el usuario haya elegido para ese panel
+ * (se recuerda en localStorage). Así una misma gráfica puede verse de la
+ * forma que a cada persona le resulte más fácil de leer.
+ */
+function renderPanelFlexible(contenedorId, datos, porDefecto) {
+  const tipo = obtenerVistaGuardada(contenedorId, porDefecto || 'barras');
+  const selector = document.querySelector(`.selector-vista[data-target="${contenedorId}"]`);
+  if (selector && selector.value !== tipo) selector.value = tipo;
+
+  if (tipo === 'dona') {
+    renderDona(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, color: COLOR_MAP[d.clase || ''] })));
+  } else if (tipo === 'apilada') {
+    renderBarraApilada(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, color: COLOR_MAP[d.clase || ''] })));
+  } else {
+    const max = Math.max(...datos.map(d => d.valor), 1);
+    renderBarras(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: d.clase })), max);
+  }
+}
+
+function configurarSelectoresVista() {
+  document.querySelectorAll('.selector-vista').forEach(sel => {
+    const target = sel.dataset.target;
+    sel.value = obtenerVistaGuardada(target, sel.value);
+    sel.addEventListener('change', () => {
+      localStorage.setItem('cce_vista_' + target, sel.value);
+      renderDashboard();
+    });
+  });
+}
+
+// ============================================================================
+// VISTAS GUARDADAS DEL DASHBOARD — qué paneles se ven + qué tipo de gráfica
+// tiene cada uno, guardado en hasta 3 configuraciones distintas.
+// ============================================================================
+const TODOS_LOS_PANELES = [...document.querySelectorAll('#view-dashboard [data-panel-nombre]')]
+  .map(el => el.dataset.panelNombre);
+
+function obtenerPanelesVisibles() {
+  try {
+    const guardados = JSON.parse(localStorage.getItem('cce_paneles_visibles'));
+    if (Array.isArray(guardados)) return guardados;
+  } catch (e) { /* usa todos por defecto */ }
+  return TODOS_LOS_PANELES.slice();
+}
+
+function guardarPanelesVisibles(nombres) {
+  localStorage.setItem('cce_paneles_visibles', JSON.stringify(nombres));
+}
+
+function aplicarVisibilidadPaneles() {
+  const visibles = obtenerPanelesVisibles();
+  document.querySelectorAll('#view-dashboard [data-panel-nombre]').forEach(el => {
+    // "Hallazgos" respeta además su propia regla (solo si hay pestaña Hallazgos) — no lo forzamos aquí.
+    if (el.id === 'panelHallazgos') return;
+    el.style.display = visibles.includes(el.dataset.panelNombre) ? '' : 'none';
+  });
+}
+
+function configurarVistas() {
+  document.getElementById('btnVistas').addEventListener('click', () => {
+    pintarListaPaneles();
+    pintarEstadoSlots();
+    abrirModal('modalVistas');
+  });
+  document.getElementById('btnCerrarVistas').addEventListener('click', () => cerrarModal('modalVistas'));
+
+  document.querySelectorAll('#modalVistas [data-accion]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const slot = btn.dataset.slot;
+      if (btn.dataset.accion === 'guardar') guardarVista(slot);
+      else cargarVista(slot);
+    });
+  });
+}
+
+function pintarListaPaneles() {
+  const cont = document.getElementById('listaPanelesVista');
+  const visibles = obtenerPanelesVisibles();
+  cont.innerHTML = TODOS_LOS_PANELES.map(nombre => `
+    <label><input type="checkbox" value="${escapeHtml(nombre)}" ${visibles.includes(nombre) ? 'checked' : ''}> ${escapeHtml(nombre)}</label>
+  `).join('');
+  cont.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const seleccionados = [...cont.querySelectorAll('input:checked')].map(c => c.value);
+      guardarPanelesVisibles(seleccionados);
+      aplicarVisibilidadPaneles();
+    });
+  });
+}
+
+function obtenerVistasGuardadas() {
+  try { return JSON.parse(localStorage.getItem('cce_vistas_guardadas')) || {}; }
+  catch (e) { return {}; }
+}
+
+function guardarVista(slot) {
+  const vistas = obtenerVistasGuardadas();
+  const tipos = {};
+  document.querySelectorAll('.selector-vista').forEach(sel => { tipos[sel.dataset.target] = sel.value; });
+
+  vistas[slot] = {
+    paneles: obtenerPanelesVisibles(),
+    tipos,
+    columnas: obtenerColumnasVisibles(),
+    guardadaEl: new Date().toLocaleString('es-CO')
+  };
+  localStorage.setItem('cce_vistas_guardadas', JSON.stringify(vistas));
+  pintarEstadoSlots();
+  mostrarToast(`Vista ${slot} guardada.`, 'success');
+}
+
+function cargarVista(slot) {
+  const vistas = obtenerVistasGuardadas();
+  const vista = vistas[slot];
+  if (!vista) { mostrarToast(`La Vista ${slot} todavía está vacía.`, 'error'); return; }
+
+  guardarPanelesVisibles(vista.paneles || TODOS_LOS_PANELES.slice());
+  Object.keys(vista.tipos || {}).forEach(target => localStorage.setItem('cce_vista_' + target, vista.tipos[target]));
+  if (vista.columnas) guardarColumnasVisibles(vista.columnas);
+
+  aplicarVisibilidadPaneles();
+  configurarSelectoresVista(); // refresca los <select> con los tipos guardados
+  renderDashboard();
+  renderTablaDatos();
+  pintarListaPaneles();
+  cerrarModal('modalVistas');
+  mostrarToast(`Vista ${slot} cargada.`, 'success');
+}
+
+function pintarEstadoSlots() {
+  const vistas = obtenerVistasGuardadas();
+  [1, 2, 3].forEach(slot => {
+    const span = document.querySelector(`.vista-slot-estado[data-estado="${slot}"]`);
+    span.textContent = vistas[slot] ? `Guardada ${vistas[slot].guardadaEl}` : 'Vacía';
+  });
+}
+
 // --- Filtro de aliados (select) ---------------------------------------------
 function renderFiltroAliados() {
   const select = document.getElementById('filtroAliado');
@@ -842,35 +994,113 @@ function configurarImportacionExcel() {
     if (!file) return;
 
     try {
-      const actas = await parsearExcelActas(file);
-      if (!actas.length) {
-        mostrarToast('No se encontraron filas con "#" válido en el archivo.', 'error');
+      const analisis = await analizarExcel(file);
+
+      if (!analisis.actas.length && !analisis.hojaHallazgos) {
+        mostrarToast('No encontré actas (fila con "#") ni una hoja de hallazgos en este archivo.', 'error');
         return;
       }
-      const confirmar = confirm(
-        'Se encontraron ' + actas.length + ' actas en el archivo.\n' +
-        'Se identifican por Fecha + Ciudad + Order ID: las que ya existan se ' +
-        'actualizarán (sin duplicarse) y las nuevas se agregarán.\n\n' +
-        '¿Continuar con la sincronización?'
-      );
-      if (!confirmar) return;
 
-      btn.disabled = true;
-      btn.textContent = 'Sincronizando…';
-      const resp = await postAccion('bulkImport', { actas });
-      await cargarDatos(false);
-      mostrarToast((resp.mensaje || 'Importación completada.') + ' Gráficas actualizadas.', 'success');
+      // Si el archivo trae solo actas (el caso más común), no interrumpimos con
+      // preguntas — se sincroniza directo, como ya funcionaba.
+      if (analisis.actas.length && !analisis.hojaHallazgos) {
+        await confirmarYSincronizarActas(analisis.actas, btn);
+        return;
+      }
+
+      // Si trae actas Y una hoja de hallazgos, dejamos que la persona elija
+      // qué hacer con cada una, desde el panel del Asistente.
+      preguntarQueHacerConExcel(analisis, btn);
     } catch (err) {
-      mostrarToast('Error al importar: ' + err.message, 'error');
+      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
       console.error(err);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '📤 Importar desde Excel';
     }
   });
 }
 
-function parsearExcelActas(file) {
+async function confirmarYSincronizarActas(actas, btn) {
+  const confirmar = confirm(
+    'Se encontraron ' + actas.length + ' actas en el archivo.\n' +
+    'Se identifican por Fecha + Ciudad + Order ID: las que ya existan se ' +
+    'actualizarán (sin duplicarse) y las nuevas se agregarán.\n\n' +
+    '¿Continuar con la sincronización?'
+  );
+  if (!confirmar) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Sincronizando…';
+  try {
+    const resp = await postAccion('bulkImport', { actas });
+    await cargarDatos(false);
+    mostrarToast((resp.mensaje || 'Importación completada.') + ' Gráficas actualizadas.', 'success');
+  } catch (err) {
+    mostrarToast('Error al importar: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 Importar desde Excel';
+  }
+}
+
+/**
+ * Abre el panel del Asistente con una pregunta: qué hacer con cada tipo de
+ * información detectada en el Excel (actas y/o una hoja de hallazgos).
+ */
+function preguntarQueHacerConExcel(analisis, btn) {
+  const panel = document.getElementById('panelAsistente');
+  const overlay = document.getElementById('asistenteOverlay');
+  const cont = document.getElementById('asistenteContenido');
+
+  let html = `<div class="asistente-resumen">
+    <span class="emoji">🧐</span>
+    <div><strong>Encontré varias cosas en tu archivo</strong>
+    <span>Dime qué quieres hacer con cada una</span></div>
+  </div>`;
+
+  if (analisis.actas.length) {
+    html += `<div class="hallazgo-grupo">
+      <h4>📋 ${analisis.actas.length} actas encontradas</h4>
+      <div class="hallazgo-item">
+        <span class="hallazgo-detalle">Se pueden sincronizar con "Datos completos" (actualiza las que ya existan, agrega las nuevas).</span>
+        <button type="button" class="btn btn-primary btn-block" id="btnExcelSincronizarActas" style="margin-top:8px;">Sincronizar estas actas</button>
+      </div>
+    </div>`;
+  }
+
+  if (analisis.hojaHallazgos) {
+    html += `<div class="hallazgo-grupo">
+      <h4>🔎 Hoja "${escapeHtml(analisis.hojaHallazgos)}" con hallazgos</h4>
+      <div class="hallazgo-item">
+        <span class="hallazgo-detalle">La app no escribe directo en la pestaña "Hallazgos" de tu Sheet — pero te preparo el CSV normalizado (Serie Medidor + Aliado) listo para importar ahí.</span>
+        <button type="button" class="btn btn-primary btn-block" id="btnExcelDescargarHallazgos" style="margin-top:8px;">Descargar CSV de hallazgos</button>
+      </div>
+    </div>`;
+  }
+
+  html += `<button class="btn btn-ghost btn-block" id="btnCancelarPreguntaExcel" style="margin-top:10px;">Cancelar</button>`;
+  cont.innerHTML = html;
+  panel.classList.add('is-active');
+  overlay.classList.add('is-active');
+
+  const cerrarPanel = () => { panel.classList.remove('is-active'); overlay.classList.remove('is-active'); };
+
+  const btnActas = document.getElementById('btnExcelSincronizarActas');
+  if (btnActas) btnActas.addEventListener('click', async () => {
+    cerrarPanel();
+    await confirmarYSincronizarActas(analisis.actas, btn);
+  });
+
+  const btnHallazgos = document.getElementById('btnExcelDescargarHallazgos');
+  if (btnHallazgos) btnHallazgos.addEventListener('click', () => {
+    const csv = generarCsvHallazgos(analisis.workbook, analisis.hojaHallazgos);
+    descargarCsv(csv, 'hallazgos_para_importar.csv');
+    mostrarToast('CSV descargado — impórtalo en la pestaña "Hallazgos" de tu Sheet.', 'success');
+  });
+
+  document.getElementById('btnCancelarPreguntaExcel').addEventListener('click', cerrarPanel);
+}
+
+/** Lee el archivo completo y detecta tanto la hoja de actas como una posible hoja de hallazgos. */
+function analizarExcel(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
@@ -879,41 +1109,90 @@ function parsearExcelActas(file) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-        // Busca, entre TODAS las hojas del archivo, la primera que tenga una
-        // fila cuya columna A sea exactamente "#" — así funciona sin importar
-        // cómo se llame la pestaña (Datos Completos, Auditoria IA=Manual, etc.).
-        let nombreHoja = null, idxEncabezado = -1, filas = null;
+        // Hoja de actas: la primera que tenga una fila cuya columna A sea "#"
+        let idxEncabezado = -1, filas = null;
         for (const nombre of workbook.SheetNames) {
           const candidatas = XLSX.utils.sheet_to_json(workbook.Sheets[nombre], { header: 1, raw: true, defval: '' });
           const idx = candidatas.findIndex(f => String(f[0]).trim() === '#');
-          if (idx !== -1) { nombreHoja = nombre; idxEncabezado = idx; filas = candidatas; break; }
+          if (idx !== -1) { idxEncabezado = idx; filas = candidatas; break; }
         }
-        if (!filas) {
-          throw new Error('No se encontró ninguna hoja con una fila de encabezados que empiece en "#".');
-        }
-        const encabezados = filas[idxEncabezado].map(h => String(h || '').trim());
 
-        const actas = [];
-        for (let i = idxEncabezado + 1; i < filas.length; i++) {
-          const fila = filas[i];
-          const id = fila[0];
-          if (typeof id !== 'number' || id <= 0) continue; // separadores / filas vacías
-          const obj = {};
-          encabezados.forEach((h, col) => {
-            if (!h) return;
-            let valor = fila[col];
-            if (valor instanceof Date) valor = valor.toISOString().slice(0, 10);
-            obj[h] = valor === undefined ? '' : valor;
-          });
-          actas.push(obj);
+        let actas = [];
+        if (filas) {
+          const encabezados = filas[idxEncabezado].map(h => String(h || '').trim());
+          for (let i = idxEncabezado + 1; i < filas.length; i++) {
+            const fila = filas[i];
+            const id = fila[0];
+            if (typeof id !== 'number' || id <= 0) continue;
+            const obj = {};
+            encabezados.forEach((h, col) => {
+              if (!h) return;
+              let valor = fila[col];
+              if (valor instanceof Date) valor = valor.toISOString().slice(0, 10);
+              obj[h] = valor === undefined ? '' : valor;
+            });
+            actas.push(obj);
+          }
         }
-        resolve(actas);
+
+        // Hoja de hallazgos: cualquier pestaña cuyo nombre contenga "hallazgo"
+        const hojaHallazgos = workbook.SheetNames.find(n => n.toLowerCase().includes('hallazgo')) || null;
+
+        resolve({ workbook, actas, hojaHallazgos });
       } catch (err) {
         reject(err);
       }
     };
     reader.readAsArrayBuffer(file);
   });
+}
+
+/** Normaliza una hoja de hallazgos (formato Microsoft Forms) al CSV que espera la pestaña "Hallazgos". */
+function generarCsvHallazgos(workbook, nombreHoja) {
+  const MAPEO_ALIADO = {
+    'MEHV': 'MHEV INGENIERIA SAS', 'C3': 'C3 PRONTO SERVICIOS SAS',
+    'CIRELECTRICOS': 'Circuitos Eléctricos SAS', 'ENERBIT': 'ENERBIT SA ESP',
+    'VALGARO': 'VALGARO SAS', 'CGM': 'CGM SUPPORT S.A.S',
+    'SE&SE': 'S&SE', 'OCA': 'OCA GLOBAL COLOMBIA SAS'
+  };
+
+  const filas = XLSX.utils.sheet_to_json(workbook.Sheets[nombreHoja], { header: 1, raw: true, defval: '' });
+  const encabezados = (filas[0] || []).map(h => String(h || '').trim().toLowerCase());
+  const idx = (patron) => encabezados.findIndex(h => h.includes(patron));
+
+  const iMedidor = idx('medidor');
+  const iAliado = idx('aliado');
+  const iAmpliacion = idx('ampliación') !== -1 ? idx('ampliación') : idx('ampliacion');
+  const iObservacion = idx('observación general') !== -1 ? idx('observación general') : idx('observacion general');
+  const iSoporte = idx('cargar archivo');
+
+  const salida = [['Serie Medidor', 'Aliado', 'Ampliación del hallazgo', 'Observación general', 'Soporte']];
+  for (let i = 1; i < filas.length; i++) {
+    const fila = filas[i];
+    const aliadoRaw = String(fila[iAliado] || '').trim();
+    if (!aliadoRaw) continue;
+    const aliado = MAPEO_ALIADO[aliadoRaw.toUpperCase()] || aliadoRaw;
+    salida.push([
+      fila[iMedidor] || '', aliado,
+      iAmpliacion !== -1 ? (fila[iAmpliacion] || '') : '',
+      iObservacion !== -1 ? (fila[iObservacion] || '') : '',
+      iSoporte !== -1 ? (fila[iSoporte] || '') : ''
+    ]);
+  }
+
+  return salida.map(fila => fila.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+}
+
+function descargarCsv(contenido, nombreArchivo) {
+  const blob = new Blob(['\ufeff' + contenido], { type: 'text/csv;charset=utf-8;' }); // BOM para acentos en Excel
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nombreArchivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function actasFiltradas() {
@@ -939,18 +1218,68 @@ function normalizarFechaCliente(valor) {
 }
 
 // --- Tabla: Datos completos --------------------------------------------------
-const COLUMNAS_TABLA = [
+// Todas las columnas disponibles para mostrar en la tabla (mismo orden que la hoja)
+const TODAS_LAS_COLUMNAS = [
+  '#', 'Fecha', 'Ciudad', 'Aliado', 'Técnico', 'Serie Medidor', 'Tipo Medida',
+  'V. Servicio', 'V. Alta Trafo', 'V. Baja Trafo', 'Factor acta (K)', 'Factor real (L)',
+  'R01 Tensión', 'R03 Formato', 'Score', 'Supervisión Manual (T)', 'Supervisión IA (U)',
+  'Acuerdo T=U', 'revisado', 'Fallos Detectados', 'Tipo de acta', 'Order ID'
+];
+
+// Columnas visibles por defecto (el usuario puede cambiarlas con el botón "🗂 Columnas")
+const COLUMNAS_POR_DEFECTO = [
   '#', 'Fecha', 'Ciudad', 'Aliado', 'Técnico', 'Serie Medidor', 'Tipo Medida',
   'Score', 'Supervisión Manual (T)', 'Supervisión IA (U)', 'Acuerdo T=U', 'revisado', 'Order ID'
 ];
 
+function obtenerColumnasVisibles() {
+  try {
+    const guardadas = JSON.parse(localStorage.getItem('cce_columnas_tabla'));
+    if (Array.isArray(guardadas) && guardadas.length) return guardadas;
+  } catch (e) { /* usa el valor por defecto */ }
+  return COLUMNAS_POR_DEFECTO;
+}
+
+function guardarColumnasVisibles(columnas) {
+  localStorage.setItem('cce_columnas_tabla', JSON.stringify(columnas));
+}
+
+function configurarSelectorColumnas() {
+  const btn = document.getElementById('btnColumnas');
+  const panel = document.getElementById('panelColumnas');
+
+  const pintarPanel = () => {
+    const visibles = obtenerColumnasVisibles();
+    panel.innerHTML = TODAS_LAS_COLUMNAS.map(c => `
+      <label><input type="checkbox" value="${escapeHtml(c)}" ${visibles.includes(c) ? 'checked' : ''}> ${escapeHtml(c)}</label>
+    `).join('');
+    panel.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const seleccionadas = [...panel.querySelectorAll('input:checked')].map(c => c.value);
+        guardarColumnasVisibles(seleccionadas.length ? seleccionadas : ['#']); // siempre al menos el #
+        renderTablaDatos();
+      });
+    });
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pintarPanel();
+    panel.classList.toggle('is-active');
+  });
+  document.addEventListener('click', (e) => {
+    if (!panel.contains(e.target) && e.target !== btn) panel.classList.remove('is-active');
+  });
+}
+
 function renderTablaDatos() {
   const filtradas = actasFiltradas();
+  const columnas = obtenerColumnasVisibles();
   document.getElementById('datosSubtitle').textContent =
     filtradas.length + ' de ' + state.actas.length + ' actas mostradas';
 
   const thead = document.querySelector('#tablaDatos thead');
-  thead.innerHTML = '<tr>' + COLUMNAS_TABLA.map(c => `<th>${c}</th>`).join('') + '<th>Acciones</th></tr>';
+  thead.innerHTML = '<tr>' + columnas.map(c => `<th>${c}</th>`).join('') + '<th>Acciones</th></tr>';
 
   const tbody = document.querySelector('#tablaDatos tbody');
   tbody.innerHTML = '';
@@ -959,7 +1288,7 @@ function renderTablaDatos() {
     .sort((a, b) => (b['#'] || 0) - (a['#'] || 0))
     .forEach(acta => {
       const tr = document.createElement('tr');
-      tr.innerHTML = COLUMNAS_TABLA.map(c => `<td>${celdaHtml(c, acta[c])}</td>`).join('') +
+      tr.innerHTML = columnas.map(c => `<td>${celdaHtml(c, acta[c])}</td>`).join('') +
         `<td class="row-actions">
            <button class="btn btn-ghost btn-icon" data-editar="${acta['#']}">✎</button>
            <button class="btn btn-ghost btn-icon" data-eliminar="${acta['#']}">🗑</button>

@@ -70,7 +70,10 @@
           <h2>Resumen ejecutivo</h2>
           <p class="view-subtitle" id="tituloActualizacion">Cargando datos…</p>
         </div>
-        <button class="btn btn-ghost" id="btnRefrescar">↻ Actualizar ahora</button>
+        <div class="header-actions">
+          <button class="btn btn-ghost" id="btnVistas">👁 Vistas</button>
+          <button class="btn btn-ghost" id="btnRefrescar">↻ Actualizar ahora</button>
+        </div>
       </header>
 
       <div class="kpi-grid">
@@ -101,41 +104,76 @@
       </div>
 
       <div class="panel-grid">
-        <div class="panel">
-          <h3>Conformidad general (dona)</h3>
+        <div class="panel" data-panel-nombre="Conformidad general">
+          <div class="panel-header-row">
+            <h3>Conformidad general</h3>
+            <select class="select-compact selector-vista" data-target="chartDona">
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+              <option value="barras">Barras</option>
+            </select>
+          </div>
           <div id="chartDona" class="chart-svg-wrap"></div>
         </div>
-        <div class="panel">
+        <div class="panel" data-panel-nombre="Tendencia de actas por mes">
           <h3>Tendencia de actas por mes (línea)</h3>
           <div id="chartLinea" class="chart-svg-wrap"></div>
         </div>
-        <div class="panel">
-          <h3>Actas por tipo de medida (barra apilada)</h3>
+        <div class="panel" data-panel-nombre="Actas por tipo de medida">
+          <div class="panel-header-row">
+            <h3>Actas por tipo de medida</h3>
+            <select class="select-compact selector-vista" data-target="chartApilada">
+              <option value="apilada">Barra apilada</option>
+              <option value="dona">Dona</option>
+              <option value="barras">Barras</option>
+            </select>
+          </div>
           <div id="chartApilada" class="chart-svg-wrap"></div>
         </div>
-        <div class="panel">
+        <div class="panel" data-panel-nombre="Conformidad por aliado">
           <h3>Conformidad por aliado</h3>
           <div id="chartAliados" class="chart-bars"></div>
         </div>
-        <div class="panel">
+        <div class="panel" data-panel-nombre="Score promedio por tipo de medida">
           <h3>Score promedio por tipo de medida</h3>
           <div id="chartTipoMedida" class="chart-bars"></div>
         </div>
-        <div class="panel">
-          <h3>Acuerdo vs Desacuerdo (Manual vs IA)</h3>
+        <div class="panel" data-panel-nombre="Acuerdo vs Desacuerdo">
+          <div class="panel-header-row">
+            <h3>Acuerdo vs Desacuerdo (Manual vs IA)</h3>
+            <select class="select-compact selector-vista" data-target="chartAcuerdo">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
           <div id="chartAcuerdo" class="chart-bars"></div>
         </div>
-        <div class="panel">
-          <h3>Concordancia Factor Acta vs Factor Real</h3>
+        <div class="panel" data-panel-nombre="Concordancia Factor">
+          <div class="panel-header-row">
+            <h3>Concordancia Factor Acta vs Factor Real</h3>
+            <select class="select-compact selector-vista" data-target="chartFactor">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
           <div id="chartFactor" class="chart-bars"></div>
         </div>
-        <div class="panel" id="panelHallazgos" style="display:none;">
+        <div class="panel" id="panelHallazgos" data-panel-nombre="Hallazgos por aliado" style="display:none;">
           <div class="panel-header-row">
             <h3>Hallazgos reportados por aliado</h3>
             <select id="filtroHallazgosTipo" class="select-compact">
               <option value="">Todos los tipos</option>
               <option value="semidirecta">Semidirecta</option>
               <option value="indirecta">Indirecta</option>
+            </select>
+          </div>
+          <div class="panel-header-row" style="margin-top:-8px;">
+            <span></span>
+            <select class="select-compact selector-vista" data-target="chartHallazgos">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
             </select>
           </div>
           <div id="chartHallazgos" class="chart-bars"></div>
@@ -170,6 +208,10 @@
         <label class="toolbar-date-label">Desde <input type="date" id="filtroFechaDesde"></label>
         <label class="toolbar-date-label">Hasta <input type="date" id="filtroFechaHasta"></label>
         <button class="btn btn-ghost btn-icon" id="btnLimpiarFechas" title="Quitar filtro de fechas">✕ Fechas</button>
+        <div class="columnas-selector-wrap">
+          <button class="btn btn-ghost btn-icon" id="btnColumnas" type="button">🗂 Columnas</button>
+          <div id="panelColumnas" class="columnas-panel"></div>
+        </div>
       </div>
 
       <div class="table-wrap">
@@ -212,6 +254,38 @@
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" id="btnCancelarActa">Cancelar</button>
       <button type="submit" form="formActa" class="btn btn-primary" id="btnGuardarActa">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Vistas guardadas del Dashboard -->
+<div id="modalVistas" class="modal-overlay">
+  <div class="modal-card modal-card-wide">
+    <h2>Vistas del Dashboard</h2>
+    <p class="modal-copy">Marca qué paneles quieres ver, y guarda hasta 3 configuraciones distintas para cambiar entre ellas sin perder tu trabajo.</p>
+
+    <div id="listaPanelesVista" class="lista-paneles-vista"></div>
+
+    <div class="vistas-guardadas">
+      <div class="vista-slot" data-slot="1"><b>Vista 1</b>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="guardar" data-slot="1">💾 Guardar aquí</button>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="cargar" data-slot="1">📂 Cargar</button>
+        <span class="vista-slot-estado" data-estado="1"></span>
+      </div>
+      <div class="vista-slot" data-slot="2"><b>Vista 2</b>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="guardar" data-slot="2">💾 Guardar aquí</button>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="cargar" data-slot="2">📂 Cargar</button>
+        <span class="vista-slot-estado" data-estado="2"></span>
+      </div>
+      <div class="vista-slot" data-slot="3"><b>Vista 3</b>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="guardar" data-slot="3">💾 Guardar aquí</button>
+        <button type="button" class="btn btn-ghost btn-icon" data-accion="cargar" data-slot="3">📂 Cargar</button>
+        <span class="vista-slot-estado" data-estado="3"></span>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="btnCerrarVistas">Cerrar</button>
     </div>
   </div>
 </div>
