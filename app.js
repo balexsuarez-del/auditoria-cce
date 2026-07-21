@@ -280,12 +280,14 @@ function renderBarras(contenedorId, items, maxValor) {
   cont.innerHTML = '';
   items.forEach(item => {
     const pct = maxValor ? Math.min(100, (item.valor / maxValor) * 100) : 0;
+    const clase = item.clase || '';
     const row = document.createElement('div');
     row.className = 'bar-row';
     row.innerHTML = `
+      <span class="bar-dot ${clase}"></span>
       <span class="bar-label" title="${escapeHtml(item.etiqueta)}">${escapeHtml(item.etiqueta)}</span>
-      <span class="bar-track"><span class="bar-fill ${item.clase || ''}" style="width:${pct}%"></span></span>
-      <span class="bar-value">${item.texto}</span>`;
+      <span class="bar-track"><span class="bar-fill ${clase}" style="width:${pct}%"></span></span>
+      <span class="bar-value ${clase}">${item.texto}</span>`;
     cont.appendChild(row);
   });
   if (!items.length) cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>';
