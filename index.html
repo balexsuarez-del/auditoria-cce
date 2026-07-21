@@ -102,6 +102,18 @@
 
       <div class="panel-grid">
         <div class="panel">
+          <h3>Conformidad general (dona)</h3>
+          <div id="chartDona" class="chart-svg-wrap"></div>
+        </div>
+        <div class="panel">
+          <h3>Tendencia de actas por mes (línea)</h3>
+          <div id="chartLinea" class="chart-svg-wrap"></div>
+        </div>
+        <div class="panel">
+          <h3>Actas por tipo de medida (barra apilada)</h3>
+          <div id="chartApilada" class="chart-svg-wrap"></div>
+        </div>
+        <div class="panel">
           <h3>Conformidad por aliado</h3>
           <div id="chartAliados" class="chart-bars"></div>
         </div>
@@ -240,6 +252,11 @@
     <button class="btn btn-ghost btn-icon" id="btnAsistenteActualizar">↻ Actualizar datos</button>
     <button class="btn btn-ghost btn-icon" id="btnAsistenteImportar">📤 Importar Excel</button>
   </div>
+
+  <form id="formPreguntaAsistente" class="asistente-pregunta">
+    <input type="text" id="inputPreguntaAsistente" placeholder="Pregúntame: actas de VALGARO en julio, desacuerdos de MHEV, promedio score indirecta…">
+    <button type="submit" class="btn btn-primary btn-icon">Preguntar</button>
+  </form>
 
   <div id="asistenteContenido" class="asistente-contenido"></div>
 </div>

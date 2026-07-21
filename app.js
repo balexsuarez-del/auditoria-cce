@@ -175,6 +175,14 @@ function configurarAsistente() {
     cerrar();
     document.getElementById('inputExcel').click();
   });
+
+  document.getElementById('formPreguntaAsistente').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = document.getElementById('inputPreguntaAsistente');
+    const pregunta = input.value.trim();
+    if (!pregunta) return;
+    renderRespuestaPregunta(pregunta);
+  });
 }
 
 /** Recorre las actas cargadas y agrupa discrepancias por tipo, con severidad. */
@@ -355,6 +363,118 @@ function renderAsistente() {
   });
 }
 
+/**
+ * Interpreta una pregunta en lenguaje natural sencillo (por palabras clave,
+ * no es un modelo de IA) y devuelve las actas que coinciden con lo detectado:
+ * aliado, ciudad, tipo de medida, estado (desacuerdo/conforme/pendiente),
+ * mes/año, o número de acta puntual.
+ */
+function interpretarPregunta(textoOriginal) {
+  const q = textoOriginal.toLowerCase().trim();
+  let resultado = state.actas.slice();
+  const criterios = [];
+
+  const aliados = [...new Set(state.actas.map(a => a['Aliado']).filter(Boolean))];
+  const aliadoMatch = aliados.find(al => q.includes(al.toLowerCase())) ||
+    aliados.find(al => al.toLowerCase().split(' ').some(palabra => palabra.length > 3 && q.includes(palabra)));
+  if (aliadoMatch) { resultado = resultado.filter(a => a['Aliado'] === aliadoMatch); criterios.push(`aliado: ${aliadoMatch}`); }
+
+  const ciudades = [...new Set(state.actas.map(a => a['Ciudad']).filter(Boolean))];
+  const ciudadMatch = ciudades.find(c => q.includes(c.toLowerCase()));
+  if (ciudadMatch) { resultado = resultado.filter(a => a['Ciudad'] === ciudadMatch); criterios.push(`ciudad: ${ciudadMatch}`); }
+
+  ['semidirecta', 'indirecta', 'directa'].forEach(t => {
+    if (q.includes(t)) { resultado = resultado.filter(a => (a['Tipo Medida'] || '').toLowerCase() === t); criterios.push(`tipo: ${t}`); }
+  });
+
+  if (q.includes('desacuerdo')) { resultado = resultado.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO'); criterios.push('desacuerdo T≠U'); }
+  if (q.includes('no conform')) { resultado = resultado.filter(a => (a['Supervisión Manual (T)'] || '') === 'NO CONFORMIDAD'); criterios.push('no conformidad'); }
+  else if (q.includes('conforme')) { resultado = resultado.filter(a => (a['Supervisión Manual (T)'] || '') === 'CONFORME'); criterios.push('conforme'); }
+  if (q.includes('pendiente')) { resultado = resultado.filter(a => (a['Supervisión Manual (T)'] || '') === 'PENDIENTE'); criterios.push('pendiente'); }
+  if (q.includes('revisad')) { resultado = resultado.filter(a => (a['revisado'] || '').trim() !== ''); criterios.push('revisadas'); }
+
+  const meses = { enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+    julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12' };
+  const mesEncontrado = Object.keys(meses).find(m => q.includes(m));
+  if (mesEncontrado) {
+    const mm = meses[mesEncontrado];
+    resultado = resultado.filter(a => normalizarFechaCliente(a['Fecha']).slice(5, 7) === mm);
+    criterios.push(`mes: ${mesEncontrado}`);
+  }
+  const anioMatch = q.match(/20\d{2}/);
+  if (anioMatch) { resultado = resultado.filter(a => normalizarFechaCliente(a['Fecha']).startsWith(anioMatch[0])); criterios.push(`año: ${anioMatch[0]}`); }
+
+  const actaNumMatch = q.match(/acta\s*#?\s*(\d+)|#\s*(\d+)/);
+  if (actaNumMatch) {
+    const num = Number(actaNumMatch[1] || actaNumMatch[2]);
+    resultado = resultado.filter(a => Number(a['#']) === num);
+    criterios.push(`# ${num}`);
+  }
+
+  const esPromedio = /promedio|score/.test(q);
+  const esConteo = /cu[aá]nt[oa]s?/.test(q);
+
+  return { resultado, criterios, esPromedio, esConteo };
+}
+
+function renderRespuestaPregunta(pregunta) {
+  const { resultado, criterios, esPromedio, esConteo } = interpretarPregunta(pregunta);
+  const cont = document.getElementById('asistenteContenido');
+
+  let html = `<div class="asistente-resumen">
+    <span class="emoji">💬</span>
+    <div><strong>"${escapeHtml(pregunta)}"</strong>
+    <span>${criterios.length ? 'Detecté: ' + criterios.join(' · ') : 'No detecté filtros específicos, muestro coincidencias generales'}</span></div>
+  </div>`;
+
+  if (esPromedio) {
+    const scores = resultado.map(a => parseFloat(a['Score'])).filter(n => !isNaN(n));
+    const prom = scores.length ? (scores.reduce((s, v) => s + v, 0) / scores.length).toFixed(1) : '—';
+    html += `<div class="asistente-resumen"><span class="emoji">📊</span>
+      <div><strong>Score promedio: ${prom}</strong><span>calculado sobre ${resultado.length} acta(s)</span></div></div>`;
+  } else if (esConteo) {
+    html += `<div class="asistente-resumen"><span class="emoji">🔢</span>
+      <div><strong>${resultado.length} acta(s) encontradas</strong></div></div>`;
+  }
+
+  if (!resultado.length) {
+    html += `<div class="asistente-vacio"><span class="emoji">🤔</span>
+      No encontré actas que coincidan. Prueba mencionando un aliado, ciudad, tipo de medida
+      (semidirecta/indirecta/directa), un mes, un estado (desacuerdo, conforme, pendiente) o un número de acta (#42).</div>`;
+  } else {
+    html += `<div class="hallazgo-grupo"><h4>📄 Resultados <span class="severidad-pill sev-baja">${resultado.length}</span></h4>`;
+    resultado.slice(0, 40).forEach(a => {
+      html += `<div class="hallazgo-item" data-acta-id="${a['#']}">
+        <b>Acta #${a['#']} — ${escapeHtml(a['Aliado'])}</b>
+        <span class="hallazgo-detalle">${escapeHtml(a['Ciudad'])} · ${escapeHtml(a['Tipo Medida'])} · ${escapeHtml(normalizarFechaCliente(a['Fecha']))} · Score ${escapeHtml(a['Score'])}</span>
+      </div>`;
+    });
+    if (resultado.length > 40) html += `<p class="panel-note">…y ${resultado.length - 40} más — afina la pregunta para acotar.</p>`;
+    html += `</div>`;
+  }
+
+  html += `<button class="btn btn-ghost btn-block" id="btnVolverDiagnostico" style="margin-top:10px;">← Volver al diagnóstico</button>`;
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.hallazgo-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = Number(el.dataset.actaId);
+      document.getElementById('panelAsistente').classList.remove('is-active');
+      document.getElementById('asistenteOverlay').classList.remove('is-active');
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+      document.querySelector('[data-view="datos"]').classList.add('is-active');
+      document.getElementById('view-datos').classList.add('is-active');
+      abrirModalActa(id);
+    });
+  });
+
+  document.getElementById('btnVolverDiagnostico').addEventListener('click', () => {
+    document.getElementById('inputPreguntaAsistente').value = '';
+    renderAsistente();
+  });
+}
+
 // ============================================================================
 // CARGA DE DATOS (GET) + POLLING
 // ============================================================================
@@ -424,6 +544,19 @@ function renderDashboard() {
   document.getElementById('kpiConformesIA').textContent = k.conformesIA;
   document.getElementById('kpiNoConformesIA').textContent = k.noConformesIA;
   document.getElementById('kpiDesacuerdos').textContent = k.desacuerdos;
+
+  renderDona('chartDona', [
+    { etiqueta: 'Conforme', valor: k.conformesManual, color: 'var(--green-600)' },
+    { etiqueta: 'No conforme', valor: k.noConformesManual, color: 'var(--red-600)' },
+    { etiqueta: 'Pendiente', valor: k.pendientesManual, color: 'var(--amber-700)' }
+  ], k.total);
+
+  renderLineaTendencia('chartLinea', calcularActasPorMes());
+
+  renderBarraApilada('chartApilada', k.porTipoMedida.map((t, i) => ({
+    etiqueta: t.tipo, valor: t.actas,
+    color: ['var(--purple-500)', 'var(--orange-500)', 'var(--blue-600)'][i % 3]
+  })));
 
   // Conformidad por aliado — barra de marca (púrpura), roja solo si supera 20% NC
   renderBarras('chartAliados', k.porAliado.map(a => ({
@@ -535,6 +668,119 @@ function renderBarras(contenedorId, items, maxValor) {
   if (!items.length) cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>';
 }
 
+/**
+ * Gráfico de dona (pastel con hueco) — el más fácil de leer para mostrar
+ * proporciones de un total (ej. cuántas actas están conformes/pendientes).
+ * segmentos: [{ etiqueta, valor, color }], total opcional (si no, se suma).
+ */
+function renderDona(contenedorId, segmentos, total) {
+  const cont = document.getElementById(contenedorId);
+  const suma = total || segmentos.reduce((s, x) => s + x.valor, 0);
+  if (!suma) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+
+  const r = 60, cx = 80, cy = 80, grosor = 22;
+  const circunferencia = 2 * Math.PI * r;
+  let acumulado = 0;
+
+  const arcos = segmentos.filter(s => s.valor > 0).map(s => {
+    const pct = s.valor / suma;
+    const largo = pct * circunferencia;
+    const offset = -acumulado * circunferencia;
+    acumulado += pct;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" style="stroke:${s.color}"
+      stroke-width="${grosor}" stroke-dasharray="${largo} ${circunferencia - largo}"
+      stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})"></circle>`;
+  }).join('');
+
+  const svg = `<svg viewBox="0 0 160 160" width="180" height="180">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--ink-100)" stroke-width="${grosor}"></circle>
+    ${arcos}
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="dona-centro-valor">${suma}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dona-centro-label">actas</text>
+  </svg>`;
+
+  const leyenda = segmentos.map(s => `
+    <span class="chart-leyenda-item">
+      <span class="chart-leyenda-dot" style="background:${s.color}"></span>
+      ${escapeHtml(s.etiqueta)}: <b>${s.valor}</b> (${suma ? ((s.valor / suma) * 100).toFixed(0) : 0}%)
+    </span>`).join('');
+
+  cont.innerHTML = svg + `<div class="chart-leyenda">${leyenda}</div>`;
+}
+
+/** Agrupa las actas cargadas por mes (YYYY-MM) y cuenta cuántas hay en cada uno. */
+function calcularActasPorMes() {
+  const conteo = {};
+  state.actas.forEach(a => {
+    const mes = normalizarFechaCliente(a['Fecha']).slice(0, 7); // "2026-07"
+    if (!mes) return;
+    conteo[mes] = (conteo[mes] || 0) + 1;
+  });
+  return Object.keys(conteo).sort().map(mes => ({ mes, cantidad: conteo[mes] }));
+}
+
+/**
+ * Gráfico de línea — el más fácil de leer para mostrar una tendencia en el
+ * tiempo (ej. cuántas actas se registraron cada mes).
+ * puntos: [{ mes: "2026-07", cantidad: 12 }]
+ */
+function renderLineaTendencia(contenedorId, puntos) {
+  const cont = document.getElementById(contenedorId);
+  if (!puntos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+
+  const w = 320, h = 160, padding = 26;
+  const max = Math.max(...puntos.map(p => p.cantidad), 1);
+  const pasoX = puntos.length > 1 ? (w - padding * 2) / (puntos.length - 1) : 0;
+
+  const coords = puntos.map((p, i) => {
+    const x = padding + i * pasoX;
+    const y = h - padding - (p.cantidad / max) * (h - padding * 2);
+    return { x, y, p };
+  });
+
+  const linea = coords.map(c => `${c.x},${c.y}`).join(' ');
+  const area = `${padding},${h - padding} ${linea} ${coords[coords.length - 1].x},${h - padding}`;
+
+  const puntosSvg = coords.map(c => `
+    <circle cx="${c.x}" cy="${c.y}" r="4" fill="var(--purple-500)"></circle>
+    <text x="${c.x}" y="${c.y - 10}" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--ink-700)">${c.p.cantidad}</text>
+    <text x="${c.x}" y="${h - 8}" text-anchor="middle" font-size="9.5" fill="var(--ink-500)">${c.p.mes.slice(5)}/${c.p.mes.slice(2, 4)}</text>
+  `).join('');
+
+  const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" preserveAspectRatio="xMidYMid meet">
+    <polygon points="${area}" fill="var(--purple-100)"></polygon>
+    <polyline points="${linea}" fill="none" stroke="var(--purple-500)" stroke-width="2.5"></polyline>
+    ${puntosSvg}
+  </svg>`;
+
+  cont.innerHTML = svg;
+}
+
+/**
+ * Barra apilada horizontal (una sola barra dividida en tramos de color) —
+ * muy fácil de leer para ver de un vistazo cómo se reparte un total entre
+ * pocas categorías (ej. cuántas actas son semidirecta/indirecta/directa).
+ * segmentos: [{ etiqueta, valor, color }]
+ */
+function renderBarraApilada(contenedorId, segmentos) {
+  const cont = document.getElementById(contenedorId);
+  const total = segmentos.reduce((s, x) => s + x.valor, 0);
+  if (!total) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+
+  const track = segmentos.filter(s => s.valor > 0).map(s => {
+    const pct = (s.valor / total) * 100;
+    return `<span class="apilada-segmento" style="width:${pct}%;background:${s.color}">${pct >= 8 ? pct.toFixed(0) + '%' : ''}</span>`;
+  }).join('');
+
+  const leyenda = segmentos.map(s => `
+    <span class="chart-leyenda-item">
+      <span class="chart-leyenda-dot" style="background:${s.color}"></span>
+      ${escapeHtml(s.etiqueta)}: <b>${s.valor}</b>
+    </span>`).join('');
+
+  cont.innerHTML = `<div class="apilada-track">${track}</div><div class="chart-leyenda">${leyenda}</div>`;
+}
+
 // --- Filtro de aliados (select) ---------------------------------------------
 function renderFiltroAliados() {
   const select = document.getElementById('filtroAliado');
@@ -612,8 +858,8 @@ function configurarImportacionExcel() {
       btn.disabled = true;
       btn.textContent = 'Sincronizando…';
       const resp = await postAccion('bulkImport', { actas });
-      mostrarToast(resp.mensaje || 'Importación completada.', 'success');
       await cargarDatos(false);
+      mostrarToast((resp.mensaje || 'Importación completada.') + ' Gráficas actualizadas.', 'success');
     } catch (err) {
       mostrarToast('Error al importar: ' + err.message, 'error');
       console.error(err);
