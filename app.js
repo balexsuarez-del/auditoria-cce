@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   configurarModalUsuario();
   configurarModalActa();
   configurarFiltros();
+  configurarAsistente();
 
   document.getElementById('btnRefrescar').addEventListener('click', () => cargarDatos(true));
 
@@ -148,6 +149,211 @@ function configurarNavegacion() {
 // ============================================================================
 function abrirModal(id) { document.getElementById(id).classList.add('is-active'); }
 function cerrarModal(id) { document.getElementById(id).classList.remove('is-active'); }
+
+// ============================================================================
+// ASISTENTE CCE — escaneo de discrepancias basado en reglas (sin IA externa)
+// ============================================================================
+function configurarAsistente() {
+  const panel = document.getElementById('panelAsistente');
+  const overlay = document.getElementById('asistenteOverlay');
+
+  document.getElementById('btnAsistente').addEventListener('click', () => {
+    panel.classList.add('is-active');
+    overlay.classList.add('is-active');
+    renderAsistente();
+  });
+  const cerrar = () => { panel.classList.remove('is-active'); overlay.classList.remove('is-active'); };
+  document.getElementById('btnCerrarAsistente').addEventListener('click', cerrar);
+  overlay.addEventListener('click', cerrar);
+
+  document.getElementById('btnAsistenteActualizar').addEventListener('click', async () => {
+    await cargarDatos(true);
+    renderAsistente();
+    mostrarToast('Datos actualizados.', 'success');
+  });
+  document.getElementById('btnAsistenteImportar').addEventListener('click', () => {
+    cerrar();
+    document.getElementById('inputExcel').click();
+  });
+}
+
+/** Recorre las actas cargadas y agrupa discrepancias por tipo, con severidad. */
+function ejecutarDiagnostico() {
+  const grupos = [];
+
+  const r01 = state.actas.filter(a => (a['R01 Tensión'] || '').toString().toUpperCase() === 'FALLA');
+  if (r01.length) grupos.push({
+    titulo: 'Tensión inconsistente (R01)', icono: '⚡', severidad: 'alta',
+    items: r01.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: `${a['Ciudad']} · Serie ${a['Serie Medidor']} · ${a['Tipo Medida']}` }))
+  });
+
+  const r03 = state.actas.filter(a => {
+    const v = (a['R03 Formato'] || '').toString().toUpperCase();
+    return v && v !== 'OK' && v !== 'PENDIENTE';
+  });
+  if (r03.length) grupos.push({
+    titulo: 'Formato de tensión (R03)', icono: '📏', severidad: 'media',
+    items: r03.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`, detalle: a['R03 Formato'] }))
+  });
+
+  const factorMismatch = [];
+  state.actas.forEach(a => {
+    const acta = a['Factor acta (K)'], real = a['Factor real (L)'];
+    if (acta === undefined || acta === '' || real === undefined || real === '') return;
+    if (String(real).trim().toLowerCase() === 'ok') return;
+    const an = parseFloat(acta), rn = parseFloat(real);
+    if (isNaN(an) || isNaN(rn) || an === rn) return;
+    factorMismatch.push(a);
+  });
+  if (factorMismatch.length) grupos.push({
+    titulo: 'Factor acta ≠ Factor real', icono: '🔢', severidad: 'alta',
+    items: factorMismatch.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: `Acta: ${a['Factor acta (K)']} · Real: ${a['Factor real (L)']}` }))
+  });
+
+  const grupoDuplicados = {};
+  state.actas.forEach(a => {
+    if (!a['Serie Medidor']) return;
+    const clave = [a['Fecha'], a['Ciudad'], a['Serie Medidor']]
+      .map(v => String(v || '').trim().toLowerCase()).join('|');
+    (grupoDuplicados[clave] = grupoDuplicados[clave] || []).push(a);
+  });
+  const duplicados = Object.values(grupoDuplicados).filter(arr => arr.length > 1);
+  if (duplicados.length) grupos.push({
+    titulo: 'Duplicadas por fecha/ciudad/serie', icono: '🧩', severidad: 'alta',
+    items: duplicados.map(arr => ({
+      id: arr[0]['#'],
+      idsEliminables: arr.slice(1).map(a => a['#']), // se conserva la primera, se ofrece borrar el resto
+      texto: `${arr.length} actas con misma fecha/ciudad/serie — ${arr[0]['Aliado']}`,
+      detalle: `# ${arr.map(a => a['#']).join(', ')} · ${normalizarFechaCliente(arr[0]['Fecha'])} · Serie ${arr[0]['Serie Medidor']}` }))
+  });
+
+  // Duplicados por Order ID: mismo Order ID + misma Fecha + misma Ciudad = duplicado real.
+  // Mismo Order ID pero fecha distinta puede ser un re-trámite legítimo del mismo servicio,
+  // así que se marca por separado con severidad más baja para no generar falsas alarmas.
+  const grupoOrderId = {};
+  state.actas.forEach(a => {
+    const orderId = (a['Order ID'] || '').toString().trim();
+    if (!orderId) return;
+    (grupoOrderId[orderId.toLowerCase()] = grupoOrderId[orderId.toLowerCase()] || []).push(a);
+  });
+  const ordenesRepetidas = Object.values(grupoOrderId).filter(arr => arr.length > 1);
+  const ordenesDuplicadasReales = [], ordenesReTramite = [];
+  ordenesRepetidas.forEach(arr => {
+    const mismaFechaCiudad = arr.every(a =>
+      normalizarFechaCliente(a['Fecha']) === normalizarFechaCliente(arr[0]['Fecha']) &&
+      (a['Ciudad'] || '') === (arr[0]['Ciudad'] || ''));
+    (mismaFechaCiudad ? ordenesDuplicadasReales : ordenesReTramite).push(arr);
+  });
+  if (ordenesDuplicadasReales.length) grupos.push({
+    titulo: 'Order ID duplicado (misma fecha)', icono: '🆔', severidad: 'alta',
+    items: ordenesDuplicadasReales.map(arr => ({
+      id: arr[0]['#'],
+      idsEliminables: arr.slice(1).map(a => a['#']),
+      texto: `${arr.length} actas con el mismo Order ID — ${arr[0]['Aliado']}`,
+      detalle: `# ${arr.map(a => a['#']).join(', ')} · Order ID ${arr[0]['Order ID']}` }))
+  });
+  if (ordenesReTramite.length) grupos.push({
+    titulo: 'Order ID repetido en otra fecha (revisar si es re-trámite)', icono: '🔁', severidad: 'media',
+    items: ordenesReTramite.map(arr => ({
+      id: arr[0]['#'],
+      texto: `${arr.length} actas — ${arr[0]['Aliado']}`,
+      detalle: `# ${arr.map(a => a['#']).join(', ')} · fechas: ${arr.map(a => normalizarFechaCliente(a['Fecha'])).join(', ')}` }))
+  });
+
+  const incompletas = state.actas.filter(a => !a['Serie Medidor'] || a['Factor acta (K)'] === '' || a['Factor acta (K)'] === undefined);
+  if (incompletas.length) grupos.push({
+    titulo: 'Campos incompletos', icono: '📋', severidad: 'media',
+    items: incompletas.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: 'Falta Serie Medidor o Factor acta (K)' }))
+  });
+
+  const pendientes = state.actas.filter(a => (a['Supervisión Manual (T)'] || '') === 'PENDIENTE');
+  if (pendientes.length) grupos.push({
+    titulo: 'Pendientes de supervisión manual', icono: '⏳', severidad: 'baja',
+    items: pendientes.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: normalizarFechaCliente(a['Fecha']) }))
+  });
+
+  return grupos;
+}
+
+function renderAsistente() {
+  const cont = document.getElementById('asistenteContenido');
+  const grupos = ejecutarDiagnostico();
+  const totalItems = grupos.reduce((s, g) => s + g.items.length, 0);
+  const criticos = grupos.filter(g => g.severidad === 'alta').reduce((s, g) => s + g.items.length, 0);
+
+  if (!totalItems) {
+    cont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>
+      No encontré discrepancias en las ${state.actas.length} actas cargadas. ¡Cero estrés!</div>`;
+    return;
+  }
+
+  const emoji = criticos > 0 ? '🔎' : '🙂';
+  let html = `<div class="asistente-resumen">
+    <span class="emoji">${emoji}</span>
+    <div><strong>${totalItems} hallazgo(s) en ${grupos.length} categoría(s)</strong>
+    <span>${criticos ? criticos + ' de atención prioritaria' : 'nada urgente, solo revisiones pendientes'}</span></div>
+  </div>`;
+
+  grupos.forEach(g => {
+    html += `<div class="hallazgo-grupo">
+      <h4>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></h4>`;
+    g.items.slice(0, 25).forEach((it, idx) => {
+      const puedeEliminar = it.idsEliminables && it.idsEliminables.length;
+      html += `<div class="hallazgo-item sev-${g.severidad}" data-acta-id="${it.id}">
+        <b>${escapeHtml(it.texto)}</b>
+        <span class="hallazgo-detalle">${escapeHtml(it.detalle)}</span>
+        ${puedeEliminar ? `<button class="btn-eliminar-duplicado" type="button"
+            data-ids="${it.idsEliminables.join(',')}" data-grupo="${g.titulo}-${idx}">
+            🗑 Conservar #${it.id} y eliminar ${it.idsEliminables.length} duplicado(s)</button>` : ''}
+      </div>`;
+    });
+    if (g.items.length > 25) html += `<p class="panel-note">…y ${g.items.length - 25} más.</p>`;
+    html += `</div>`;
+  });
+
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.hallazgo-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-eliminar-duplicado')) return; // el botón maneja su propio click
+      const id = Number(el.dataset.actaId);
+      document.getElementById('panelAsistente').classList.remove('is-active');
+      document.getElementById('asistenteOverlay').classList.remove('is-active');
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+      document.querySelector('[data-view="datos"]').classList.add('is-active');
+      document.getElementById('view-datos').classList.add('is-active');
+      abrirModalActa(id);
+    });
+  });
+
+  cont.querySelectorAll('.btn-eliminar-duplicado').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ids = btn.dataset.ids.split(',').map(Number).filter(Boolean);
+      if (!confirm(`¿Eliminar ${ids.length} acta(s) duplicada(s) (# ${ids.join(', ')})? Esta acción no se puede deshacer.`)) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Eliminando…';
+      try {
+        for (const id of ids) {
+          await postAccion('deleteActa', { id });
+        }
+        mostrarToast(`${ids.length} duplicado(s) eliminado(s).`, 'success');
+        await cargarDatos(false);
+        renderAsistente();
+      } catch (err) {
+        mostrarToast('Error al eliminar: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '🗑 Reintentar';
+      }
+    });
+  });
+}
 
 // ============================================================================
 // CARGA DE DATOS (GET) + POLLING

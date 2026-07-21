@@ -206,6 +206,45 @@
 
 <div id="toastContainer" class="toast-container"></div>
 
+<!-- Asistente: botón flotante -->
+<button id="btnAsistente" class="asistente-boton" title="Asistente CCE" aria-label="Abrir asistente">
+  <svg viewBox="0 0 100 100" width="34" height="34">
+    <circle cx="50" cy="42" r="30" fill="#F3E8FF" stroke="#7028AE" stroke-width="4"/>
+    <path d="M38 78 Q50 88 62 78 L60 66 L40 66 Z" fill="#7028AE"/>
+    <circle cx="50" cy="86" r="6" fill="#FF7900"/>
+    <path d="M38 40 q4 -6 8 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M54 40 q4 -6 8 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M41 52 q9 8 18 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+  </svg>
+</button>
+
+<!-- Asistente: panel lateral -->
+<div id="panelAsistente" class="asistente-panel">
+  <div class="asistente-header">
+    <svg viewBox="0 0 100 100" width="40" height="40">
+      <circle cx="50" cy="42" r="30" fill="#F3E8FF" stroke="#7028AE" stroke-width="4"/>
+      <path d="M38 78 Q50 88 62 78 L60 66 L40 66 Z" fill="#7028AE"/>
+      <circle cx="50" cy="86" r="6" fill="#FF7900"/>
+      <path d="M38 40 q4 -6 8 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M54 40 q4 -6 8 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M41 52 q9 8 18 0" fill="none" stroke="#3A1259" stroke-width="3.5" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h3>Asistente CCE</h3>
+      <p>Cero estrés — reviso tus datos por ti</p>
+    </div>
+    <button id="btnCerrarAsistente" class="asistente-cerrar" aria-label="Cerrar">✕</button>
+  </div>
+
+  <div class="asistente-acciones">
+    <button class="btn btn-ghost btn-icon" id="btnAsistenteActualizar">↻ Actualizar datos</button>
+    <button class="btn btn-ghost btn-icon" id="btnAsistenteImportar">📤 Importar Excel</button>
+  </div>
+
+  <div id="asistenteContenido" class="asistente-contenido"></div>
+</div>
+<div id="asistenteOverlay" class="asistente-overlay"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
