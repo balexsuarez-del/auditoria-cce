@@ -8,9 +8,11 @@ const state = {
   actas: [],
   kpis: null,
   hallazgosPorAliado: [],
+  hallazgosDetalle: [],
   usuario: localStorage.getItem('cce_usuario') || '',
   pin: localStorage.getItem('cce_pin') || '',
-  filtros: { texto: '', aliado: '', supervision: '' },
+  filtros: { texto: '', aliado: '', supervision: '', fechaDesde: '', fechaHasta: '' },
+  filtroHallazgosTipo: '',
   cargando: false,
   editandoId: null
 };
@@ -106,6 +108,7 @@ async function intentarEntrar() {
     state.actas = data.actas;
     state.kpis = data.kpis;
     state.hallazgosPorAliado = data.hallazgosPorAliado || [];
+    state.hallazgosDetalle = data.hallazgosDetalle || [];
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
 
@@ -172,6 +175,7 @@ async function cargarDatos(mostrarError) {
     state.actas = data.actas;
     state.kpis = data.kpis;
     state.hallazgosPorAliado = data.hallazgosPorAliado || [];
+    state.hallazgosDetalle = data.hallazgosDetalle || [];
 
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
@@ -246,13 +250,45 @@ function renderDashboard() {
   const panelHallazgos = document.getElementById('panelHallazgos');
   if (state.hallazgosPorAliado && state.hallazgosPorAliado.length) {
     panelHallazgos.style.display = '';
-    const maxHallazgos = Math.max(...state.hallazgosPorAliado.map(h => h.hallazgos));
-    renderBarras('chartHallazgos', state.hallazgosPorAliado.map(h => ({
-      etiqueta: h.aliado, valor: h.hallazgos, texto: String(h.hallazgos), clase: 'accent'
-    })), maxHallazgos);
+    const porAliado = hallazgosPorAliadoFiltrados();
+    if (porAliado.length) {
+      const maxHallazgos = Math.max(...porAliado.map(h => h.hallazgos));
+      renderBarras('chartHallazgos', porAliado.map(h => ({
+        etiqueta: h.aliado, valor: h.hallazgos, texto: String(h.hallazgos), clase: 'accent'
+      })), maxHallazgos);
+    } else {
+      renderBarras('chartHallazgos', [], 1);
+    }
   } else {
     panelHallazgos.style.display = 'none';
   }
+}
+
+/**
+ * Recalcula "hallazgos por aliado" aplicando el filtro de Tipo de Medida
+ * (semidirecta/indirecta), cruzando cada hallazgo (por Serie Medidor) con
+ * el Tipo de Medida registrado en la hoja de actas.
+ */
+function hallazgosPorAliadoFiltrados() {
+  if (!state.filtroHallazgosTipo) return state.hallazgosPorAliado;
+  if (!state.hallazgosDetalle || !state.hallazgosDetalle.length) return state.hallazgosPorAliado;
+
+  const serieATipo = {};
+  state.actas.forEach(a => {
+    const serie = (a['Serie Medidor'] || '').toString().trim();
+    if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
+  });
+
+  const conteo = {};
+  state.hallazgosDetalle.forEach(h => {
+    const tipo = serieATipo[(h.serie || '').toString().trim()];
+    if (tipo !== state.filtroHallazgosTipo) return; // no coincide el tipo de medida, o el medidor no se encontró en Datos
+    conteo[h.aliado] = (conteo[h.aliado] || 0) + 1;
+  });
+
+  return Object.keys(conteo)
+    .map(aliado => ({ aliado, hallazgos: conteo[aliado] }))
+    .sort((a, b) => b.hallazgos - a.hallazgos);
 }
 
 /** Compara Factor acta (K) vs Factor real (L) en todas las actas cargadas. */
@@ -315,6 +351,25 @@ function configurarFiltros() {
   document.getElementById('filtroSupervision').addEventListener('change', e => {
     state.filtros.supervision = e.target.value;
     renderTablaDatos();
+  });
+  document.getElementById('filtroFechaDesde').addEventListener('change', e => {
+    state.filtros.fechaDesde = e.target.value;
+    renderTablaDatos();
+  });
+  document.getElementById('filtroFechaHasta').addEventListener('change', e => {
+    state.filtros.fechaHasta = e.target.value;
+    renderTablaDatos();
+  });
+  document.getElementById('btnLimpiarFechas').addEventListener('click', () => {
+    state.filtros.fechaDesde = '';
+    state.filtros.fechaHasta = '';
+    document.getElementById('filtroFechaDesde').value = '';
+    document.getElementById('filtroFechaHasta').value = '';
+    renderTablaDatos();
+  });
+  document.getElementById('filtroHallazgosTipo').addEventListener('change', e => {
+    state.filtroHallazgosTipo = e.target.value;
+    renderDashboard();
   });
   document.getElementById('btnNuevaActa').addEventListener('click', () => abrirModalActa(null));
   configurarImportacionExcel();
@@ -418,14 +473,23 @@ function actasFiltradas() {
         .join(' ').toLowerCase();
       if (!haystack.includes(state.filtros.texto)) return false;
     }
+    const fecha = normalizarFechaCliente(a['Fecha']);
+    if (state.filtros.fechaDesde && fecha && fecha < state.filtros.fechaDesde) return false;
+    if (state.filtros.fechaHasta && fecha && fecha > state.filtros.fechaHasta) return false;
     return true;
   });
+}
+
+/** Convierte "2026-07-01T00:00:00.000Z" o "2026-07-01" a "2026-07-01" para poder comparar con un <input type="date">. */
+function normalizarFechaCliente(valor) {
+  if (!valor) return '';
+  return String(valor).slice(0, 10);
 }
 
 // --- Tabla: Datos completos --------------------------------------------------
 const COLUMNAS_TABLA = [
   '#', 'Fecha', 'Ciudad', 'Aliado', 'Técnico', 'Serie Medidor', 'Tipo Medida',
-  'Score', 'Supervisión Manual (T)', 'Supervisión IA (U)', 'Acuerdo T=U', 'revisado'
+  'Score', 'Supervisión Manual (T)', 'Supervisión IA (U)', 'Acuerdo T=U', 'revisado', 'Order ID'
 ];
 
 function renderTablaDatos() {

@@ -118,9 +118,16 @@
           <div id="chartFactor" class="chart-bars"></div>
         </div>
         <div class="panel" id="panelHallazgos" style="display:none;">
-          <h3>Hallazgos reportados por aliado</h3>
+          <div class="panel-header-row">
+            <h3>Hallazgos reportados por aliado</h3>
+            <select id="filtroHallazgosTipo" class="select-compact">
+              <option value="">Todos los tipos</option>
+              <option value="semidirecta">Semidirecta</option>
+              <option value="indirecta">Indirecta</option>
+            </select>
+          </div>
           <div id="chartHallazgos" class="chart-bars"></div>
-          <p class="panel-note">Fuente: formulario de supervisión (Microsoft Forms).</p>
+          <p class="panel-note">Fuente: formulario de supervisión (Microsoft Forms). El filtro cruza la serie del medidor con el tipo de medida registrado en Datos completos.</p>
         </div>
       </div>
     </section>
@@ -148,6 +155,9 @@
           <option value="NO CONFORMIDAD">Manual: NO CONFORMIDAD</option>
           <option value="PENDIENTE">Manual: PENDIENTE</option>
         </select>
+        <label class="toolbar-date-label">Desde <input type="date" id="filtroFechaDesde"></label>
+        <label class="toolbar-date-label">Hasta <input type="date" id="filtroFechaHasta"></label>
+        <button class="btn btn-ghost btn-icon" id="btnLimpiarFechas" title="Quitar filtro de fechas">✕ Fechas</button>
       </div>
 
       <div class="table-wrap">
