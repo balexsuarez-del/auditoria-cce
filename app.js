@@ -197,6 +197,33 @@ function cerrarModal(id) { document.getElementById(id).classList.remove('is-acti
  * un momento (para que el asistente "señale" visualmente de qué está
  * hablando), antes de abrir el formulario de edición.
  */
+/**
+ * Va al Dashboard y resalta un panel completo (por su data-panel-nombre) —
+ * útil para que el asistente "señale" de cuál gráfica está hablando.
+ */
+function irYResaltarPanel(nombrePanel) {
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+  document.querySelector('[data-view="dashboard"]').classList.add('is-active');
+  document.getElementById('view-dashboard').classList.add('is-active');
+
+  // Si el panel estaba oculto por una Vista guardada, se vuelve a mostrar
+  // para poder señalarlo (si no, no habría nada que resaltar).
+  const visibles = obtenerPanelesVisibles();
+  if (!visibles.includes(nombrePanel)) {
+    guardarPanelesVisibles([...visibles, nombrePanel]);
+    aplicarVisibilidadPaneles();
+  }
+
+  setTimeout(() => {
+    const panel = document.querySelector(`#view-dashboard [data-panel-nombre="${nombrePanel}"]`);
+    if (!panel) return;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    panel.classList.add('panel-resaltado');
+    setTimeout(() => panel.classList.remove('panel-resaltado'), 2600);
+  }, 50);
+}
+
 function irYResaltarActa(id) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
@@ -264,6 +291,9 @@ function configurarAsistente() {
   document.getElementById('btnAsistentePreferencias').addEventListener('click', () => {
     renderPreferenciasGraficas();
   });
+  document.getElementById('btnAsistenteBuscarGraficar').addEventListener('click', () => {
+    renderBuscadorGraficas();
+  });
 
   document.getElementById('formPreguntaAsistente').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -279,13 +309,39 @@ function configurarAsistente() {
  * (deben coincidir con las de los <select class="selector-vista"> del HTML).
  */
 const GRAFICAS_PERSONALIZABLES = [
-  { target: 'chartDona', nombre: 'Conformidad general', opciones: ['dona', 'apilada', 'barras'] },
-  { target: 'chartApilada', nombre: 'Actas por tipo de medida', opciones: ['apilada', 'dona', 'barras'] },
-  { target: 'chartAcuerdo', nombre: 'Acuerdo vs Desacuerdo', opciones: ['barras', 'dona', 'apilada'] },
-  { target: 'chartFactor', nombre: 'Concordancia Factor Acta vs Real', opciones: ['barras', 'dona', 'apilada'] },
-  { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', opciones: ['barras', 'dona'] }
+  { target: 'chartDona', nombre: 'Conformidad general', nombrePanel: 'Conformidad general', opciones: ['dona', 'apilada', 'barras'] },
+  { target: 'chartApilada', nombre: 'Actas por tipo de medida', nombrePanel: 'Actas por tipo de medida', opciones: ['apilada', 'dona', 'barras'] },
+  { target: 'chartAcuerdo', nombre: 'Acuerdo vs Desacuerdo', nombrePanel: 'Acuerdo vs Desacuerdo', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartFactor', nombre: 'Concordancia Factor Acta vs Real', nombrePanel: 'Concordancia Factor', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', nombrePanel: 'Hallazgos por aliado', opciones: ['barras', 'dona'] }
 ];
 const NOMBRE_TIPO_GRAFICA = { barras: '📊 Barras', dona: '🍩 Dona', apilada: '▬ Apilada' };
+
+/** Cuántas categorías tiene ahora mismo cada gráfica (para poder recomendar el tipo). */
+function calcularNumCategorias(target) {
+  const k = state.kpis;
+  switch (target) {
+    case 'chartDona': return 3; // Conforme / No conforme / Pendiente
+    case 'chartApilada': return (k && k.porTipoMedida) ? k.porTipoMedida.length : 2;
+    case 'chartAcuerdo': return 2; // Conforme / Desacuerdo
+    case 'chartFactor': return 2; // Concuerda / No concuerda
+    case 'chartHallazgos': return hallazgosPorAliadoFiltrados().length || 1;
+    default: return 3;
+  }
+}
+
+/**
+ * Recomienda el tipo de gráfica más fácil de leer según cuántas categorías
+ * hay: pocas categorías (≤4) se leen mejor como dona; muchas, como barras
+ * (una dona con 8+ tajadas finitas es difícil de comparar a simple vista).
+ */
+function recomendarTipoGrafica(n, opciones) {
+  if (n <= 4) {
+    const tipo = opciones.includes('dona') ? 'dona' : (opciones.includes('apilada') ? 'apilada' : 'barras');
+    return { tipo, motivo: `${n} categorías — con pocas partes, una ${NOMBRE_TIPO_GRAFICA[tipo]} se lee de un vistazo` };
+  }
+  return { tipo: 'barras', motivo: `${n} categorías — con varias partes, las barras comparan mejor que una dona saturada` };
+}
 
 /** El asistente pregunta, gráfica por gráfica, cómo la quieres ver — y lo recuerda. */
 function renderPreferenciasGraficas() {
@@ -294,17 +350,22 @@ function renderPreferenciasGraficas() {
   let html = `<div class="asistente-resumen">
     <span class="emoji">🎨</span>
     <div><strong>¿Cómo quieres ver cada gráfica?</strong>
-    <span>Tu elección se guarda y la recordaré la próxima vez que entres</span></div>
+    <span>Te marco con ⭐ la que recomiendo — y tu elección se guarda</span></div>
   </div>`;
 
   GRAFICAS_PERSONALIZABLES.forEach(g => {
     const actual = obtenerVistaGuardada(g.target, g.opciones[0]);
+    const n = calcularNumCategorias(g.target);
+    const recomendacion = recomendarTipoGrafica(n, g.opciones);
     html += `<div class="hallazgo-grupo">
-      <h4>${escapeHtml(g.nombre)}</h4>
+      <h4>${escapeHtml(g.nombre)}
+        <button type="button" class="btn-ver-panel" data-panel="${escapeHtml(g.nombrePanel)}" title="Señalar este panel en el Dashboard">👉 Ver</button>
+      </h4>
+      <p class="panel-note" style="margin:0 0 8px;">💡 ${escapeHtml(recomendacion.motivo)}</p>
       <div class="preferencia-opciones" data-target="${g.target}">
         ${g.opciones.map(op => `
           <button type="button" class="btn-opcion-grafica ${op === actual ? 'is-active' : ''}" data-target="${g.target}" data-tipo="${op}">
-            ${NOMBRE_TIPO_GRAFICA[op]}
+            ${NOMBRE_TIPO_GRAFICA[op]}${op === recomendacion.tipo ? ' ⭐' : ''}
           </button>`).join('')}
       </div>
     </div>`;
@@ -312,6 +373,15 @@ function renderPreferenciasGraficas() {
 
   html += `<button class="btn btn-ghost btn-block" id="btnVolverDiagnosticoPreferencias" style="margin-top:10px;">← Volver al diagnóstico</button>`;
   cont.innerHTML = html;
+
+  cont.querySelectorAll('.btn-ver-panel').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      irYResaltarPanel(btn.dataset.panel);
+      document.getElementById('panelAsistente').classList.remove('is-active');
+      document.getElementById('asistenteOverlay').classList.remove('is-active');
+    });
+  });
 
   cont.querySelectorAll('.btn-opcion-grafica').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -330,6 +400,111 @@ function renderPreferenciasGraficas() {
   });
 
   document.getElementById('btnVolverDiagnosticoPreferencias').addEventListener('click', renderAsistente);
+}
+
+// ============================================================================
+// SUB-PANEL: BUSCAR Y GRAFICAR CUALQUIER CAMPO de "Datos completos"
+// ============================================================================
+const CAMPOS_GRAFICABLES = [
+  { claves: ['aliado'], campo: 'Aliado' },
+  { claves: ['ciudad'], campo: 'Ciudad' },
+  { claves: ['tipo medida', 'tipo de medida'], campo: 'Tipo Medida' },
+  { claves: ['tecnico', 'técnico'], campo: 'Técnico' },
+  { claves: ['supervision manual', 'supervisión manual', 'manual'], campo: 'Supervisión Manual (T)' },
+  { claves: ['supervision ia', 'supervisión ia', ' ia'], campo: 'Supervisión IA (U)' },
+  { claves: ['acuerdo'], campo: 'Acuerdo T=U' },
+  { claves: ['tipo acta', 'tipo de acta'], campo: 'Tipo de acta' },
+  { claves: ['revisado'], campo: 'revisado' },
+  { claves: ['score', 'puntaje'], campo: 'Score', esNumerico: true }
+];
+const PALETA_MULTICOLOR = ['var(--purple-500)', 'var(--orange-500)', 'var(--green-600)', 'var(--blue-600)', 'var(--red-600)', 'var(--amber-700)', 'var(--purple-900)'];
+
+function buscarCampoGraficable(texto) {
+  const q = texto.toLowerCase().trim();
+  return CAMPOS_GRAFICABLES.find(c => c.claves.some(k => q.includes(k)));
+}
+
+/** Cuenta cuántas actas caen en cada valor distinto de un campo categórico. */
+function agregarPorCategoria(campo) {
+  const conteo = {};
+  state.actas.forEach(a => {
+    const v = (a[campo] || '').toString().trim() || 'Sin dato';
+    conteo[v] = (conteo[v] || 0) + 1;
+  });
+  return Object.keys(conteo).map(k => ({ etiqueta: k, valor: conteo[k] })).sort((a, b) => b.valor - a.valor);
+}
+
+/** El sub-panel donde escribes un campo y el asistente lo busca y grafica solo. */
+function renderBuscadorGraficas() {
+  const cont = document.getElementById('asistenteContenido');
+  cont.innerHTML = `
+    <div class="asistente-resumen">
+      <span class="emoji">📈</span>
+      <div><strong>Busca y grafica cualquier campo</strong>
+      <span>Ej: aliado, ciudad, tipo medida, técnico, score, acuerdo…</span></div>
+    </div>
+    <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 14px;">
+      <input type="text" id="inputBuscadorGraficas" placeholder="Escribe un campo de Datos completos…">
+      <button type="submit" class="btn btn-primary btn-icon">Graficar</button>
+    </form>
+    <div id="resultadoBuscadorGraficas"></div>
+    <button class="btn btn-ghost btn-block" id="btnVolverDesdeBuscador" style="margin-top:10px;">← Volver al diagnóstico</button>
+  `;
+  document.getElementById('btnVolverDesdeBuscador').addEventListener('click', renderAsistente);
+  document.getElementById('formBuscadorGraficas').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const texto = document.getElementById('inputBuscadorGraficas').value.trim();
+    if (!texto) return;
+    ejecutarBusquedaGrafica(texto);
+  });
+}
+
+/** Encuentra el campo pedido, elige el mejor tipo de gráfica, y la dibuja ahí mismo dentro del asistente. */
+function ejecutarBusquedaGrafica(texto) {
+  const resultadoCont = document.getElementById('resultadoBuscadorGraficas');
+  const campoInfo = buscarCampoGraficable(texto);
+
+  if (!campoInfo) {
+    resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
+      No reconozco "${escapeHtml(texto)}". Prueba con: aliado, ciudad, tipo medida, técnico,
+      supervisión manual, supervisión IA, acuerdo, tipo de acta, revisado, o score.</div>`;
+    return;
+  }
+
+  const idContenedor = 'graficaBusquedaResultado';
+
+  if (campoInfo.esNumerico) {
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">histograma</span></h4>
+      <p class="panel-note" style="margin:0 0 10px;">💡 Es un valor numérico — un histograma muestra mejor cómo se distribuye que una dona o barras por valor único.</p>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+    </div>`;
+    renderHistograma(idContenedor);
+    return;
+  }
+
+  const datos = agregarPorCategoria(campoInfo.campo);
+  if (!datos.length) {
+    resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>No hay datos cargados en "${escapeHtml(campoInfo.campo)}" todavía.</div>`;
+    return;
+  }
+  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+
+  resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+    <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
+    <p class="panel-note" style="margin:0 0 10px;">💡 ${escapeHtml(rec.motivo)} — mostrando como ${NOMBRE_TIPO_GRAFICA[rec.tipo]}</p>
+    <div id="${idContenedor}" class="chart-svg-wrap"></div>
+  </div>`;
+
+  const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
+  if (rec.tipo === 'dona') {
+    renderDona(idContenedor, coloreados);
+  } else if (rec.tipo === 'apilada') {
+    renderBarraApilada(idContenedor, coloreados);
+  } else {
+    const max = Math.max(...datos.map(d => d.valor), 1);
+    renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) })), max);
+  }
 }
 
 /**
@@ -403,21 +578,22 @@ function ejecutarDiagnostico() {
       detalle: `${a['Ciudad']} · Serie ${a['Serie Medidor']} · ${a['Tipo Medida']}` }))
   });
 
-  // Sugerencia de corrección: el patrón conocido "indirecta con tensión digitada
-  // en baja" — si V. Servicio quedó igual a V. Baja Trafo (en vez de V. Alta),
-  // se puede sugerir el valor correcto con un clic.
-  const sugerenciasR01 = state.actas.filter(a => {
+  // Patrón conocido "indirecta con tensión digitada en baja" — esto NO se
+  // corrige solo (el valor real hay que confirmarlo con la foto), pero sí se
+  // le puede generar al aliado una nota lista para copiar y enviarle, para
+  // que no repita el mismo error de digitación en futuras actas.
+  const patronVServicioBaja = state.actas.filter(a => {
     if ((a['R01 Tensión'] || '').toString().toUpperCase() !== 'FALLA') return false;
     if ((a['Tipo Medida'] || '').toLowerCase() !== 'indirecta') return false;
     const vServ = parseFloat(a['V. Servicio']), vAlta = parseFloat(a['V. Alta Trafo']);
     return !isNaN(vServ) && !isNaN(vAlta) && vServ < 100 && vAlta >= 1;
   });
-  if (sugerenciasR01.length) grupos.push({
-    titulo: 'Sugerencia de corrección: V. Servicio parece estar en baja', icono: '💡', severidad: 'alta',
-    items: sugerenciasR01.map(a => ({
-      id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
-      detalle: `V. Servicio actual: ${a['V. Servicio']} · Sugerido (= V. Alta Trafo): ${a['V. Alta Trafo']}`,
-      sugerencia: { campo: 'V. Servicio', valor: a['V. Alta Trafo'] }
+  if (patronVServicioBaja.length) grupos.push({
+    titulo: 'Patrón de digitación — avisar al aliado (no se corrige solo)', icono: '📣', severidad: 'alta',
+    items: patronVServicioBaja.map(a => ({
+      id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']} (Técnico: ${a['Técnico'] || 'sin dato'})`,
+      detalle: `V. Servicio quedó en ${a['V. Servicio']} (parece ser la tensión de BAJA). En indirecta debe ir la tensión por ALTA (${a['V. Alta Trafo']}).`,
+      notaAliado: `Estimado equipo de ${a['Aliado']}: en el acta #${a['#']} (Serie ${a['Serie Medidor'] || 'N/D'}, técnico ${a['Técnico'] || 'N/D'}), la "Tensión del Servicio" quedó registrada en ${a['V. Servicio']}, que corresponde a la tensión por BAJA. Para medida indirecta, ese campo debe llevar la tensión por ALTA (en este caso ${a['V. Alta Trafo']}). Por favor verificar en campo y tenerlo en cuenta en las próximas instalaciones para evitar que se repita. Gracias.`
     }))
   });
 
@@ -612,16 +788,15 @@ function renderAsistente() {
       <h4>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></h4>`;
     g.items.slice(0, 25).forEach((it, idx) => {
       const puedeEliminar = it.idsEliminables && it.idsEliminables.length;
-      const puedeCorregir = it.sugerencia;
+      const tieneNota = it.notaAliado;
       html += `<div class="hallazgo-item sev-${g.severidad}" data-acta-id="${it.id}">
         <b>${escapeHtml(it.texto)}</b>
         <span class="hallazgo-detalle">${escapeHtml(it.detalle)}</span>
         ${puedeEliminar ? `<button class="btn-eliminar-duplicado" type="button"
             data-ids="${it.idsEliminables.join(',')}" data-grupo="${g.titulo}-${idx}">
             🗑 Conservar #${it.id} y eliminar ${it.idsEliminables.length} duplicado(s)</button>` : ''}
-        ${puedeCorregir ? `<button class="btn-aplicar-sugerencia" type="button"
-            data-id="${it.id}" data-campo="${escapeHtml(it.sugerencia.campo)}" data-valor="${escapeHtml(it.sugerencia.valor)}">
-            💡 Aplicar: ${escapeHtml(it.sugerencia.campo)} = ${escapeHtml(it.sugerencia.valor)}</button>` : ''}
+        ${tieneNota ? `<button class="btn-copiar-nota" type="button" data-nota="${escapeHtml(it.notaAliado)}">
+            📣 Copiar nota para el aliado</button>` : ''}
       </div>`;
     });
     if (g.items.length > 25) html += `<p class="panel-note">…y ${g.items.length - 25} más.</p>`;
@@ -632,7 +807,7 @@ function renderAsistente() {
 
   cont.querySelectorAll('.hallazgo-item').forEach(el => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.btn-eliminar-duplicado') || e.target.closest('.btn-aplicar-sugerencia')) return;
+      if (e.target.closest('.btn-eliminar-duplicado') || e.target.closest('.btn-copiar-nota')) return;
       const id = Number(el.dataset.actaId);
       document.getElementById('panelAsistente').classList.remove('is-active');
       document.getElementById('asistenteOverlay').classList.remove('is-active');
@@ -663,25 +838,18 @@ function renderAsistente() {
     });
   });
 
-  cont.querySelectorAll('.btn-aplicar-sugerencia').forEach(btn => {
+  cont.querySelectorAll('.btn-copiar-nota').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const id = Number(btn.dataset.id);
-      const campo = btn.dataset.campo;
-      const valor = btn.dataset.valor;
-      if (!confirm(`¿Aplicar la corrección sugerida en la acta #${id}? Se cambiará "${campo}" a "${valor}".`)) return;
-
-      btn.disabled = true;
-      btn.textContent = 'Aplicando…';
+      const nota = btn.dataset.nota;
       try {
-        await postAccion('updateActa', { id, cambios: { [campo]: valor }, usuario: state.usuario });
-        mostrarToast(`Corrección aplicada en la acta #${id}.`, 'success');
-        await cargarDatos(false);
-        renderAsistente();
+        await navigator.clipboard.writeText(nota);
+        btn.textContent = '✅ Copiada — pégala en tu correo o chat';
+        mostrarToast('Nota copiada al portapapeles.', 'success');
+        setTimeout(() => { btn.textContent = '📣 Copiar nota para el aliado'; }, 2500);
       } catch (err) {
-        mostrarToast('Error al aplicar: ' + err.message, 'error');
-        btn.disabled = false;
-        btn.textContent = '💡 Reintentar';
+        // Si el navegador bloquea el portapapeles, se muestra para copiar a mano
+        prompt('Copia este texto manualmente (Ctrl+C):', nota);
       }
     });
   });
