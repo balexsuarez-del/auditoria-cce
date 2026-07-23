@@ -1725,6 +1725,33 @@ function configurarVistas() {
   });
 
   configurarSoloMisPaneles();
+  configurarMostrarOcultarGraficas();
+}
+
+/**
+ * Botón que oculta/muestra TODO el bloque de gráficas de una vez (el
+ * panel-grid completo), dejando el Dashboard limpio con solo las tarjetas
+ * KPI hasta que la persona decida ver las gráficas. Se recuerda entre
+ * sesiones, y es independiente de "Solo mis paneles" (que decide CUÁLES
+ * gráficas se ven; este botón decide si se ve el bloque de gráficas o no).
+ */
+function configurarMostrarOcultarGraficas() {
+  const btn = document.getElementById('btnMostrarOcultarGraficas');
+  const grid = document.getElementById('panelGridDashboard');
+
+  const estanVisibles = () => localStorage.getItem('cce_graficas_visibles') === '1';
+  const actualizar = () => {
+    const visible = estanVisibles();
+    grid.style.display = visible ? '' : 'none';
+    btn.textContent = visible ? '🙈 Ocultar gráficas' : '📊 Mostrar gráficas';
+  };
+
+  btn.addEventListener('click', () => {
+    localStorage.setItem('cce_graficas_visibles', estanVisibles() ? '0' : '1');
+    actualizar();
+  });
+
+  actualizar(); // aplica el estado guardado apenas arranca la app
 }
 
 /**
