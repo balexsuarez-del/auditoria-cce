@@ -488,6 +488,85 @@ function calcularTopFallas(limite) {
     .slice(0, limite || 10);
 }
 
+// ============================================================================
+// PANELES PERSONALIZADOS — cualquier gráfica del buscador se puede "fijar"
+// como panel permanente del Dashboard, y quitar cuando ya no se necesite.
+// ============================================================================
+function obtenerPanelesPersonalizados() {
+  try { return JSON.parse(localStorage.getItem('cce_paneles_personalizados')) || []; }
+  catch (e) { return []; }
+}
+function guardarPanelesPersonalizados(lista) {
+  localStorage.setItem('cce_paneles_personalizados', JSON.stringify(lista));
+}
+
+/** Conecta el botón "📌 Fijar en el Dashboard" que aparece junto a un resultado del buscador. */
+function conectarBotonFijarPanel(contenedor) {
+  const btn = contenedor.querySelector('.btn-fijar-panel');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const config = JSON.parse(btn.dataset.config);
+    const lista = obtenerPanelesPersonalizados();
+    lista.push({ id: 'custom_' + Date.now(), ...config });
+    guardarPanelesPersonalizados(lista);
+    renderPanelesPersonalizados();
+    btn.textContent = '✅ Fijado en el Dashboard';
+    btn.disabled = true;
+    mostrarToast(`"${config.titulo}" se agregó al Dashboard.`, 'success');
+  });
+}
+
+/** Recalcula los datos {etiqueta, valor} de un panel personalizado según su tipo guardado. */
+function calcularDatosPanelPersonalizado(config) {
+  if (config.tipo === 'topFallas') return calcularTopFallas(10);
+  if (config.tipo === 'cruce') {
+    const filtradas = state.actas.filter(a => (a[config.estadoCampo] || '').toString().toUpperCase() === config.estadoValor);
+    return agregarPorCategoria(config.agrupableCampo, filtradas);
+  }
+  return agregarPorCategoria(config.campo); // tipo === 'campo'
+}
+
+/** Reconstruye todos los paneles personalizados guardados dentro del Dashboard. */
+function renderPanelesPersonalizados() {
+  const grid = document.getElementById('panelGridDashboard');
+  // Quita los paneles personalizados existentes antes de redibujarlos (evita duplicados)
+  grid.querySelectorAll('.panel-personalizado').forEach(p => p.remove());
+
+  obtenerPanelesPersonalizados().forEach(config => {
+    const idContenedor = 'panelPersonalizado_' + config.id;
+    const panel = document.createElement('div');
+    panel.className = 'panel panel-personalizado';
+    panel.dataset.panelNombre = config.titulo;
+    panel.innerHTML = `
+      <div class="panel-header-row">
+        <h3>${escapeHtml(config.titulo)} <span class="badge-personalizado">fijado</span></h3>
+        <button type="button" class="btn-quitar-panel" data-id="${config.id}" title="Quitar este panel">🗑</button>
+      </div>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+    `;
+    grid.appendChild(panel);
+
+    const datos = calcularDatosPanelPersonalizado(config);
+    if (!datos.length) { document.getElementById(idContenedor).innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+    if (config.tipo === 'topFallas') {
+      const max = Math.max(...datos.map(d => d.valor), 1);
+      renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max);
+    } else {
+      renderizarSegunRecomendacion(idContenedor, datos);
+    }
+  });
+
+  grid.querySelectorAll('.btn-quitar-panel').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('¿Quitar este panel del Dashboard? Puedes volver a generarlo cuando quieras desde "Buscar y graficar".')) return;
+      const lista = obtenerPanelesPersonalizados().filter(p => p.id !== btn.dataset.id);
+      guardarPanelesPersonalizados(lista);
+      renderPanelesPersonalizados();
+      mostrarToast('Panel quitado.', 'success');
+    });
+  });
+}
+
 /** El sub-panel donde escribes lo que quieres ver y el asistente lo busca y grafica/tabula solo. */
 function renderBuscadorGraficas() {
   const cont = document.getElementById('asistenteContenido');
@@ -557,9 +636,11 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
       <p class="panel-note" style="margin:0 0 10px;">💡 Ranking — siempre se ve mejor como barras que como dona.</p>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes' })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
     else { const max = Math.max(...datos.map(d => d.valor), 1); renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max); }
+    conectarBotonFijarPanel(resultadoCont);
     return;
   }
 
@@ -576,9 +657,11 @@ function ejecutarBusquedaGrafica(texto) {
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
     else renderizarSegunRecomendacion(idContenedor, datos);
+    conectarBotonFijarPanel(resultadoCont);
     return;
   }
 
@@ -620,10 +703,12 @@ function ejecutarBusquedaGrafica(texto) {
   resultadoCont.innerHTML = `<div class="hallazgo-grupo">
     <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
     <div id="${idContenedor}" class="chart-svg-wrap"></div>
+    <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'campo', campo: campoInfo.campo, titulo: campoInfo.campo })}'>📌 Fijar en el Dashboard</button>
   </div>`;
   const rec = renderizarSegunRecomendacion(idContenedor, datos);
   document.querySelector(`#${idContenedor}`).insertAdjacentHTML('beforebegin',
     `<p class="panel-note" style="margin:0 0 10px;">💡 ${escapeHtml(rec.motivo)} — mostrando como ${NOMBRE_TIPO_GRAFICA[rec.tipo]}. Escribe "tabla de ${campoInfo.campo.toLowerCase()}" si prefieres verlo en tabla.</p>`);
+  conectarBotonFijarPanel(resultadoCont);
 }
 
 /**
@@ -1269,6 +1354,8 @@ function renderDashboard() {
   } else {
     panelHallazgos.style.display = 'none';
   }
+
+  renderPanelesPersonalizados();
 }
 
 /**
@@ -1614,6 +1701,9 @@ function aplicarVisibilidadPaneles() {
   document.querySelectorAll('#view-dashboard [data-panel-nombre]').forEach(el => {
     // "Hallazgos" respeta además su propia regla (solo si hay pestaña Hallazgos) — no lo forzamos aquí.
     if (el.id === 'panelHallazgos') return;
+    // Los paneles personalizados (fijados desde "Buscar y graficar") se manejan
+    // con su propio botón 🗑, no con la lista de Vistas — siempre quedan visibles aquí.
+    if (el.classList.contains('panel-personalizado')) return;
     el.style.display = visibles.includes(el.dataset.panelNombre) ? '' : 'none';
   });
 }
@@ -1633,6 +1723,46 @@ function configurarVistas() {
       else cargarVista(slot);
     });
   });
+
+  configurarSoloMisPaneles();
+}
+
+/**
+ * Botón toggle: oculta de un clic los 10 paneles originales del Dashboard
+ * (los personalizados que fijaste no se tocan), para dejar el Dashboard
+ * mostrando solo lo que tú elegiste. Recuerda antes cuáles estaban visibles,
+ * para poder devolverlos igual al desactivar el modo.
+ */
+function configurarSoloMisPaneles() {
+  const btn = document.getElementById('btnSoloMisPaneles');
+
+  const enModoSoloMios = () => localStorage.getItem('cce_solo_mis_paneles') === '1';
+  const actualizarTextoBoton = () => {
+    btn.textContent = enModoSoloMios() ? '👁 Mostrar todos los paneles' : '🎯 Solo mis paneles';
+  };
+
+  btn.addEventListener('click', () => {
+    if (enModoSoloMios()) {
+      // Restaurar: vuelve a mostrar los paneles que estaban visibles antes de activar el modo
+      const anteriores = JSON.parse(localStorage.getItem('cce_paneles_visibles_antes_de_solo_mios') || 'null')
+        || TODOS_LOS_PANELES.slice();
+      guardarPanelesVisibles(anteriores);
+      localStorage.removeItem('cce_solo_mis_paneles');
+    } else {
+      // Activar: guarda cuáles estaban visibles, y oculta todos los paneles originales
+      localStorage.setItem('cce_paneles_visibles_antes_de_solo_mios', JSON.stringify(obtenerPanelesVisibles()));
+      guardarPanelesVisibles([]);
+      localStorage.setItem('cce_solo_mis_paneles', '1');
+
+      if (!obtenerPanelesPersonalizados().length) {
+        mostrarToast('Aún no tienes paneles fijados — ve a "Buscar y graficar" para agregar alguno.', 'error');
+      }
+    }
+    aplicarVisibilidadPaneles();
+    actualizarTextoBoton();
+  });
+
+  actualizarTextoBoton(); // deja el texto correcto si ya estaba activado desde antes
 }
 
 function pintarListaPaneles() {
