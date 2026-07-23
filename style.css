@@ -487,8 +487,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .asistente-cerrar:hover { background: rgba(255,255,255,0.28); }
 
-.asistente-acciones { display: flex; gap: 8px; padding: 14px 18px 0; }
-.asistente-acciones .btn { flex: 1; font-size: 12.5px; padding: 8px 10px; }
+.asistente-acciones { display: flex; gap: 8px; padding: 14px 18px 0; flex-wrap: wrap; }
+.asistente-acciones .btn { flex: 1; min-width: 100px; font-size: 12px; padding: 8px 8px; }
 
 .asistente-pregunta { display: flex; gap: 8px; padding: 12px 18px 0; }
 .asistente-pregunta input {
@@ -550,6 +550,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .btn-aplicar-sugerencia:hover { background: var(--orange-500); color: white; }
 .btn-aplicar-sugerencia:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.preferencia-opciones { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-opcion-grafica {
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 7px 12px; border-radius: 7px; border: 1px solid var(--ink-300);
+  background: white; color: var(--ink-700); cursor: pointer;
+}
+.btn-opcion-grafica:hover { background: var(--purple-100); border-color: var(--purple-500); }
+.btn-opcion-grafica.is-active { background: var(--purple-500); border-color: var(--purple-500); color: white; }
 
 .asistente-vacio { text-align: center; padding: 40px 10px; color: var(--ink-500); }
 .asistente-vacio .emoji { font-size: 40px; display: block; margin-bottom: 10px; }

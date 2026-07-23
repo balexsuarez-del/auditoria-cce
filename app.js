@@ -261,6 +261,9 @@ function configurarAsistente() {
     cerrar();
     document.getElementById('inputExcel').click();
   });
+  document.getElementById('btnAsistentePreferencias').addEventListener('click', () => {
+    renderPreferenciasGraficas();
+  });
 
   document.getElementById('formPreguntaAsistente').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -269,6 +272,64 @@ function configurarAsistente() {
     if (!pregunta) return;
     renderRespuestaPregunta(pregunta);
   });
+}
+
+/**
+ * Lista de gráficas que se pueden personalizar, con sus opciones válidas
+ * (deben coincidir con las de los <select class="selector-vista"> del HTML).
+ */
+const GRAFICAS_PERSONALIZABLES = [
+  { target: 'chartDona', nombre: 'Conformidad general', opciones: ['dona', 'apilada', 'barras'] },
+  { target: 'chartApilada', nombre: 'Actas por tipo de medida', opciones: ['apilada', 'dona', 'barras'] },
+  { target: 'chartAcuerdo', nombre: 'Acuerdo vs Desacuerdo', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartFactor', nombre: 'Concordancia Factor Acta vs Real', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', opciones: ['barras', 'dona'] }
+];
+const NOMBRE_TIPO_GRAFICA = { barras: '📊 Barras', dona: '🍩 Dona', apilada: '▬ Apilada' };
+
+/** El asistente pregunta, gráfica por gráfica, cómo la quieres ver — y lo recuerda. */
+function renderPreferenciasGraficas() {
+  const cont = document.getElementById('asistenteContenido');
+
+  let html = `<div class="asistente-resumen">
+    <span class="emoji">🎨</span>
+    <div><strong>¿Cómo quieres ver cada gráfica?</strong>
+    <span>Tu elección se guarda y la recordaré la próxima vez que entres</span></div>
+  </div>`;
+
+  GRAFICAS_PERSONALIZABLES.forEach(g => {
+    const actual = obtenerVistaGuardada(g.target, g.opciones[0]);
+    html += `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(g.nombre)}</h4>
+      <div class="preferencia-opciones" data-target="${g.target}">
+        ${g.opciones.map(op => `
+          <button type="button" class="btn-opcion-grafica ${op === actual ? 'is-active' : ''}" data-target="${g.target}" data-tipo="${op}">
+            ${NOMBRE_TIPO_GRAFICA[op]}
+          </button>`).join('')}
+      </div>
+    </div>`;
+  });
+
+  html += `<button class="btn btn-ghost btn-block" id="btnVolverDiagnosticoPreferencias" style="margin-top:10px;">← Volver al diagnóstico</button>`;
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.btn-opcion-grafica').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.target;
+      const tipo = btn.dataset.tipo;
+      localStorage.setItem('cce_vista_' + target, tipo);
+
+      // Refleja el cambio de inmediato: en el propio panel y en el <select> del Dashboard
+      cont.querySelectorAll(`.btn-opcion-grafica[data-target="${target}"]`).forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      const selectDashboard = document.querySelector(`.selector-vista[data-target="${target}"]`);
+      if (selectDashboard) selectDashboard.value = tipo;
+      renderDashboard();
+      mostrarToast(`"${GRAFICAS_PERSONALIZABLES.find(g => g.target === target).nombre}" se mostrará como ${NOMBRE_TIPO_GRAFICA[tipo]} de ahora en adelante.`, 'success');
+    });
+  });
+
+  document.getElementById('btnVolverDiagnosticoPreferencias').addEventListener('click', renderAsistente);
 }
 
 /**
