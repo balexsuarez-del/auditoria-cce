@@ -1760,20 +1760,20 @@ function configurarImportacionExcel() {
     try {
       const analisis = await analizarExcel(file);
 
-      if (!analisis.actas.length && !analisis.hojaHallazgos) {
-        mostrarToast('No encontré actas (fila con "#") ni una hoja de hallazgos en este archivo.', 'error');
+      if (!analisis.actas.length && !analisis.hojaHallazgos && !analisis.hojasExtra.length) {
+        mostrarToast('No encontré actas (fila con "#"), hoja de hallazgos, ni ninguna otra hoja con datos en este archivo.', 'error');
         return;
       }
 
-      // Si el archivo trae solo actas (el caso más común), no interrumpimos con
-      // preguntas — se sincroniza directo, como ya funcionaba.
-      if (analisis.actas.length && !analisis.hojaHallazgos) {
+      // Si el archivo trae SOLO actas (el caso más común, sin nada más que
+      // preguntar), no interrumpimos con preguntas — se sincroniza directo.
+      if (analisis.actas.length && !analisis.hojaHallazgos && !analisis.hojasExtra.length) {
         await confirmarYSincronizarActas(analisis.actas, btn);
         return;
       }
 
-      // Si trae actas Y una hoja de hallazgos, dejamos que la persona elija
-      // qué hacer con cada una, desde el panel del Asistente.
+      // Si trae actas, hallazgos, y/o cualquier otra hoja con datos, dejamos
+      // que la persona elija qué hacer con cada una, desde el Asistente.
       preguntarQueHacerConExcel(analisis, btn);
     } catch (err) {
       mostrarToast('Error al leer el archivo: ' + err.message, 'error');
@@ -1840,6 +1840,18 @@ function preguntarQueHacerConExcel(analisis, btn) {
     </div>`;
   }
 
+  if (analisis.hojasExtra && analisis.hojasExtra.length) {
+    html += `<div class="hallazgo-grupo">
+      <h4>📚 Otras ${analisis.hojasExtra.length} hoja(s) encontradas en el libro</h4>
+      ${analisis.hojasExtra.map((h, i) => `
+        <div class="hallazgo-item">
+          <b>${escapeHtml(h.nombre)}</b>
+          <span class="hallazgo-detalle">${h.filas} fila(s) con datos. No tiene un formato reconocido (ni actas ni hallazgos), pero te la puedo entregar tal cual en CSV.</span>
+          <button type="button" class="btn-descargar-hoja-extra" data-hoja="${escapeHtml(h.nombre)}" style="margin-top:8px;">📥 Descargar "${escapeHtml(h.nombre)}" en CSV</button>
+        </div>`).join('')}
+    </div>`;
+  }
+
   html += `<button class="btn btn-ghost btn-block" id="btnCancelarPreguntaExcel" style="margin-top:10px;">Cancelar</button>`;
   cont.innerHTML = html;
   panel.classList.add('is-active');
@@ -1860,6 +1872,16 @@ function preguntarQueHacerConExcel(analisis, btn) {
     mostrarToast('CSV descargado — impórtalo en la pestaña "Hallazgos" de tu Sheet.', 'success');
   });
 
+  cont.querySelectorAll('.btn-descargar-hoja-extra').forEach(b => {
+    b.addEventListener('click', () => {
+      const nombreHoja = b.dataset.hoja;
+      const csv = XLSX.utils.sheet_to_csv(analisis.workbook.Sheets[nombreHoja]);
+      const nombreArchivo = nombreHoja.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '.csv';
+      descargarCsv(csv, nombreArchivo);
+      mostrarToast(`CSV de "${nombreHoja}" descargado.`, 'success');
+    });
+  });
+
   document.getElementById('btnCancelarPreguntaExcel').addEventListener('click', cerrarPanel);
 }
 
@@ -1874,11 +1896,11 @@ function analizarExcel(file) {
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
         // Hoja de actas: la primera que tenga una fila cuya columna A sea "#"
-        let idxEncabezado = -1, filas = null;
+        let nombreHojaActas = null, idxEncabezado = -1, filas = null;
         for (const nombre of workbook.SheetNames) {
           const candidatas = XLSX.utils.sheet_to_json(workbook.Sheets[nombre], { header: 1, raw: true, defval: '' });
           const idx = candidatas.findIndex(f => String(f[0]).trim() === '#');
-          if (idx !== -1) { idxEncabezado = idx; filas = candidatas; break; }
+          if (idx !== -1) { nombreHojaActas = nombre; idxEncabezado = idx; filas = candidatas; break; }
         }
 
         let actas = [];
@@ -1902,7 +1924,19 @@ function analizarExcel(file) {
         // Hoja de hallazgos: cualquier pestaña cuyo nombre contenga "hallazgo"
         const hojaHallazgos = workbook.SheetNames.find(n => n.toLowerCase().includes('hallazgo')) || null;
 
-        resolve({ workbook, actas, hojaHallazgos });
+        // Cualquier otra hoja del libro que no sea ni la de actas ni la de
+        // hallazgos — para no dejar información del Excel sin recoger
+        // (ej. "Datos_Graficos", "Resumen Ejecutivo", "formulas", etc.).
+        const hojasExtra = workbook.SheetNames
+          .filter(n => n !== nombreHojaActas && n !== hojaHallazgos)
+          .map(n => {
+            const filasHoja = XLSX.utils.sheet_to_json(workbook.Sheets[n], { header: 1, raw: true, defval: '' });
+            const filasConDatos = filasHoja.filter(f => f.some(celda => celda !== '' && celda !== null && celda !== undefined));
+            return { nombre: n, filas: filasConDatos.length };
+          })
+          .filter(h => h.filas > 0); // ignora hojas totalmente vacías
+
+        resolve({ workbook, actas, hojaHallazgos, hojasExtra, nombreHojaActas });
       } catch (err) {
         reject(err);
       }

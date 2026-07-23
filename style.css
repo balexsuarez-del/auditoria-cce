@@ -563,6 +563,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .btn-copiar-nota:hover { background: var(--blue-600); color: white; }
 
+.btn-descargar-hoja-extra {
+  display: block; width: 100%;
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  padding: 7px 10px; border-radius: 6px; border: 1px solid var(--purple-500);
+  background: var(--purple-100); color: var(--purple-500); cursor: pointer;
+}
+.btn-descargar-hoja-extra:hover { background: var(--purple-500); color: white; }
+
 .preferencia-opciones { display: flex; gap: 6px; flex-wrap: wrap; }
 .btn-opcion-grafica {
   font-family: inherit; font-size: 12px; font-weight: 600;
