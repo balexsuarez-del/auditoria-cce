@@ -417,6 +417,20 @@ const CAMPOS_GRAFICABLES = [
   { claves: ['revisado'], campo: 'revisado' },
   { claves: ['score', 'puntaje'], campo: 'Score', esNumerico: true }
 ];
+// Campos por los que se puede "agrupar" (para cruces tipo "no conformidad por aliado")
+const CAMPOS_AGRUPABLES = [
+  { claves: ['aliado'], campo: 'Aliado' },
+  { claves: ['ciudad'], campo: 'Ciudad' },
+  { claves: ['tecnico', 'técnico'], campo: 'Técnico' },
+  { claves: ['tipo medida', 'tipo de medida'], campo: 'Tipo Medida' }
+];
+// Estados/condiciones reconocidos para filtrar antes de agrupar
+const ESTADOS_RECONOCIDOS = [
+  { claves: ['no conformidad', 'no conforme'], campo: 'Supervisión Manual (T)', valor: 'NO CONFORMIDAD' },
+  { claves: ['conforme'], campo: 'Supervisión Manual (T)', valor: 'CONFORME' },
+  { claves: ['pendiente'], campo: 'Supervisión Manual (T)', valor: 'PENDIENTE' },
+  { claves: ['desacuerdo'], campo: 'Acuerdo T=U', valor: 'DESACUERDO' }
+];
 const PALETA_MULTICOLOR = ['var(--purple-500)', 'var(--orange-500)', 'var(--green-600)', 'var(--blue-600)', 'var(--red-600)', 'var(--amber-700)', 'var(--purple-900)'];
 
 function buscarCampoGraficable(texto) {
@@ -425,27 +439,67 @@ function buscarCampoGraficable(texto) {
 }
 
 /** Cuenta cuántas actas caen en cada valor distinto de un campo categórico. */
-function agregarPorCategoria(campo) {
+function agregarPorCategoria(campo, actas) {
   const conteo = {};
-  state.actas.forEach(a => {
+  (actas || state.actas).forEach(a => {
     const v = (a[campo] || '').toString().trim() || 'Sin dato';
     conteo[v] = (conteo[v] || 0) + 1;
   });
   return Object.keys(conteo).map(k => ({ etiqueta: k, valor: conteo[k] })).sort((a, b) => b.valor - a.valor);
 }
 
-/** El sub-panel donde escribes un campo y el asistente lo busca y grafica solo. */
+/**
+ * Cuenta cuáles son las fallas/errores más comunes, mirando las columnas
+ * de reglas (R01-R07) y buscando frases típicas dentro de "Fallos
+ * Detectados" — para responder "top de fallas más comunes" sin necesitar
+ * una columna única que ya traiga esa clasificación.
+ */
+function calcularTopFallas(limite) {
+  const conteo = {};
+  const sumar = (etiqueta) => { conteo[etiqueta] = (conteo[etiqueta] || 0) + 1; };
+
+  const reglasSimples = [
+    { campo: 'R01 Tensión', etiqueta: 'R01: Tensión inconsistente' },
+    { campo: 'R03 Formato', etiqueta: 'R03: Formato de tensión incorrecto' },
+    { campo: 'R04 Foto Serial', etiqueta: 'R04: Falta foto de serial' },
+    { campo: 'R05 Foto Sistema', etiqueta: 'R05: Falta foto del sistema' },
+    { campo: 'R06 Sellos', etiqueta: 'R06: Problema con sellos' },
+    { campo: 'R07 Caja', etiqueta: 'R07: Problema con la caja' }
+  ];
+  const fragmentosTexto = [
+    { buscar: 'firma cliente', etiqueta: 'Sin firma del cliente' },
+    { buscar: 'firma frontier', etiqueta: 'Sin firma del frontier/instalador' },
+    { buscar: 'factor', etiqueta: 'Factor acta/real no coincide' },
+    { buscar: 'duplicad', etiqueta: 'Posible duplicado' }
+  ];
+
+  state.actas.forEach(a => {
+    reglasSimples.forEach(r => {
+      const v = (a[r.campo] || '').toString().toUpperCase();
+      if (v && v !== 'OK' && v !== 'PENDIENTE') sumar(r.etiqueta);
+    });
+    const textoFallos = (a['Fallos Detectados'] || '').toString().toLowerCase();
+    fragmentosTexto.forEach(f => { if (textoFallos.includes(f.buscar)) sumar(f.etiqueta); });
+  });
+
+  return Object.keys(conteo)
+    .map(etiqueta => ({ etiqueta, valor: conteo[etiqueta] }))
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, limite || 10);
+}
+
+/** El sub-panel donde escribes lo que quieres ver y el asistente lo busca y grafica/tabula solo. */
 function renderBuscadorGraficas() {
   const cont = document.getElementById('asistenteContenido');
   cont.innerHTML = `
     <div class="asistente-resumen">
       <span class="emoji">📈</span>
-      <div><strong>Busca y grafica cualquier campo</strong>
-      <span>Ej: aliado, ciudad, tipo medida, técnico, score, acuerdo…</span></div>
+      <div><strong>Busca, grafica o tabula lo que necesites</strong>
+      <span>Ej: "top fallas", "no conformidad por aliado", "tabla de ciudad", "score"…</span></div>
     </div>
     <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 14px;">
-      <input type="text" id="inputBuscadorGraficas" placeholder="Escribe un campo de Datos completos…">
-      <button type="submit" class="btn btn-primary btn-icon">Graficar</button>
+      <input type="text" id="inputBuscadorGraficas" placeholder="Ej: top de fallas más comunes, desacuerdos por técnico…">
+      <button type="submit" class="btn btn-primary btn-icon">Buscar</button>
     </form>
     <div id="resultadoBuscadorGraficas"></div>
     <button class="btn btn-ghost btn-block" id="btnVolverDesdeBuscador" style="margin-top:10px;">← Volver al diagnóstico</button>
@@ -459,24 +513,89 @@ function renderBuscadorGraficas() {
   });
 }
 
-/** Encuentra el campo pedido, elige el mejor tipo de gráfica, y la dibuja ahí mismo dentro del asistente. */
+/** Dibuja "datos" como dona/apilada/barras (recomendado) dentro de un contenedor del sub-panel. */
+function renderizarSegunRecomendacion(idContenedor, datos) {
+  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+  const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
+  if (rec.tipo === 'dona') renderDona(idContenedor, coloreados);
+  else if (rec.tipo === 'apilada') renderBarraApilada(idContenedor, coloreados);
+  else {
+    const max = Math.max(...datos.map(d => d.valor), 1);
+    renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) })), max);
+  }
+  return rec;
+}
+
+/** Dibuja "datos" como una tabla simple de 2 columnas (Etiqueta / Cantidad). */
+function renderizarComoTabla(idContenedor, datos, nombreColumna) {
+  const total = datos.reduce((s, d) => s + d.valor, 0);
+  const filas = datos.map(d => `
+    <tr><td>${escapeHtml(d.etiqueta)}</td><td style="text-align:right;font-family:var(--font-mono);">${d.valor}</td>
+    <td style="text-align:right;color:var(--ink-500);font-size:11px;">${total ? ((d.valor / total) * 100).toFixed(1) : 0}%</td></tr>`).join('');
+  document.getElementById(idContenedor).innerHTML = `
+    <table class="data-table" style="width:100%;">
+      <thead><tr><th>${escapeHtml(nombreColumna)}</th><th style="text-align:right;">Cantidad</th><th style="text-align:right;">%</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>`;
+}
+
+/** Interpreta el pedido (top de fallas / cruce por categoría / campo simple) y lo muestra como gráfica o tabla. */
 function ejecutarBusquedaGrafica(texto) {
   const resultadoCont = document.getElementById('resultadoBuscadorGraficas');
-  const campoInfo = buscarCampoGraficable(texto);
+  const q = texto.toLowerCase().trim();
+  const idContenedor = 'graficaBusquedaResultado';
+  const pideTabla = /\btabla\b/.test(q);
 
-  if (!campoInfo) {
-    resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
-      No reconozco "${escapeHtml(texto)}". Prueba con: aliado, ciudad, tipo medida, técnico,
-      supervisión manual, supervisión IA, acuerdo, tipo de acta, revisado, o score.</div>`;
+  // 1) "Top de fallas/errores más comunes"
+  if (/top|m[aá]s comunes?|ranking|frecuente/.test(q) && /falla|error/.test(q)) {
+    const datos = calcularTopFallas(10);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No encontré fallas registradas todavía.</div>`;
+      return;
+    }
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
+      <p class="panel-note" style="margin:0 0 10px;">💡 Ranking — siempre se ve mejor como barras que como dona.</p>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
+    else { const max = Math.max(...datos.map(d => d.valor), 1); renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max); }
     return;
   }
 
-  const idContenedor = 'graficaBusquedaResultado';
+  // 2) Cruce "<estado> por <campo>" — ej. "no conformidad por aliado", "desacuerdos por técnico"
+  const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
+  const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
+  if (estadoInfo && agrupableInfo && q.includes('por')) {
+    const filtradas = state.actas.filter(a => (a[estadoInfo.campo] || '').toString().toUpperCase() === estadoInfo.valor);
+    const datos = agregarPorCategoria(agrupableInfo.campo, filtradas);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No hay actas en "${estadoInfo.valor}" para agrupar por ${escapeHtml(agrupableInfo.campo)}.</div>`;
+      return;
+    }
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
+    else renderizarSegunRecomendacion(idContenedor, datos);
+    return;
+  }
+
+  // 3) Campo simple (comportamiento original: aliado, ciudad, score, etc.)
+  const campoInfo = buscarCampoGraficable(texto);
+  if (!campoInfo) {
+    resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
+      No reconozco "${escapeHtml(texto)}". Prueba con: aliado, ciudad, tipo medida, técnico,
+      supervisión manual, supervisión IA, acuerdo, tipo de acta, revisado, score, "top de fallas",
+      o cruces como "no conformidad por aliado".</div>`;
+    return;
+  }
 
   if (campoInfo.esNumerico) {
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">histograma</span></h4>
-      <p class="panel-note" style="margin:0 0 10px;">💡 Es un valor numérico — un histograma muestra mejor cómo se distribuye que una dona o barras por valor único.</p>
+      <p class="panel-note" style="margin:0 0 10px;">💡 Es un valor numérico — un histograma muestra mejor cómo se distribuye.</p>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
     </div>`;
     renderHistograma(idContenedor);
@@ -488,23 +607,23 @@ function ejecutarBusquedaGrafica(texto) {
     resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>No hay datos cargados en "${escapeHtml(campoInfo.campo)}" todavía.</div>`;
     return;
   }
-  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+
+  if (pideTabla) {
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
+      <div id="${idContenedor}"></div>
+    </div>`;
+    renderizarComoTabla(idContenedor, datos, campoInfo.campo);
+    return;
+  }
 
   resultadoCont.innerHTML = `<div class="hallazgo-grupo">
     <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
-    <p class="panel-note" style="margin:0 0 10px;">💡 ${escapeHtml(rec.motivo)} — mostrando como ${NOMBRE_TIPO_GRAFICA[rec.tipo]}</p>
     <div id="${idContenedor}" class="chart-svg-wrap"></div>
   </div>`;
-
-  const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
-  if (rec.tipo === 'dona') {
-    renderDona(idContenedor, coloreados);
-  } else if (rec.tipo === 'apilada') {
-    renderBarraApilada(idContenedor, coloreados);
-  } else {
-    const max = Math.max(...datos.map(d => d.valor), 1);
-    renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) })), max);
-  }
+  const rec = renderizarSegunRecomendacion(idContenedor, datos);
+  document.querySelector(`#${idContenedor}`).insertAdjacentHTML('beforebegin',
+    `<p class="panel-note" style="margin:0 0 10px;">💡 ${escapeHtml(rec.motivo)} — mostrando como ${NOMBRE_TIPO_GRAFICA[rec.tipo]}. Escribe "tabla de ${campoInfo.campo.toLowerCase()}" si prefieres verlo en tabla.</p>`);
 }
 
 /**
