@@ -903,6 +903,50 @@ function interpretarPregunta(textoOriginal) {
     criterios.push(`# ${num}`);
   }
 
+  // Técnico (igual que aliado: coincidencia por nombre completo o por una palabra distintiva)
+  const tecnicos = [...new Set(state.actas.map(a => a['Técnico']).filter(Boolean))];
+  const tecnicoMatch = tecnicos.find(t => q.includes(t.toLowerCase())) ||
+    tecnicos.find(t => t.toLowerCase().split(' ').some(palabra => palabra.length > 3 && q.includes(palabra)));
+  if (tecnicoMatch) { resultado = resultado.filter(a => a['Técnico'] === tecnicoMatch); criterios.push(`técnico: ${tecnicoMatch}`); }
+
+  // Serie de medidor u Order ID: números largos (5+ dígitos) o UUID
+  const uuidMatch = q.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (uuidMatch) {
+    resultado = resultado.filter(a => (a['Order ID'] || '').toLowerCase() === uuidMatch[0].toLowerCase());
+    criterios.push(`Order ID: ${uuidMatch[0]}`);
+  }
+  const serieMatch = q.match(/\b\d{5,}\b/);
+  if (serieMatch && !actaNumMatch) {
+    resultado = resultado.filter(a => (a['Serie Medidor'] || '').toString().includes(serieMatch[0]));
+    criterios.push(`serie medidor: ${serieMatch[0]}`);
+  }
+
+  // Reglas R01-R07: "r01 falla", "sellos pendiente", "caja falla", etc.
+  const reglas = [
+    { claves: ['r01', 'tension', 'tensión'], campo: 'R01 Tensión' },
+    { claves: ['r03', 'formato'], campo: 'R03 Formato' },
+    { claves: ['r04', 'foto serial'], campo: 'R04 Foto Serial' },
+    { claves: ['r05', 'foto sistema'], campo: 'R05 Foto Sistema' },
+    { claves: ['r06', 'sello'], campo: 'R06 Sellos' },
+    { claves: ['r07', 'caja'], campo: 'R07 Caja' }
+  ];
+  reglas.forEach(regla => {
+    if (regla.claves.some(k => q.includes(k))) {
+      if (q.includes('falla')) { resultado = resultado.filter(a => (a[regla.campo] || '').toString().toUpperCase().includes('FALLA')); criterios.push(`${regla.campo}: FALLA`); }
+      else if (q.includes('pendiente')) { resultado = resultado.filter(a => (a[regla.campo] || '').toString().toUpperCase() === 'PENDIENTE'); criterios.push(`${regla.campo}: PENDIENTE`); }
+      else if (q.includes(' ok') || q.endsWith('ok')) { resultado = resultado.filter(a => (a[regla.campo] || '').toString().toUpperCase() === 'OK'); criterios.push(`${regla.campo}: OK`); }
+    }
+  });
+
+  // Respaldo: si no se detectó ningún criterio específico, se busca el texto tal
+  // cual en TODOS los campos de texto libre (igual que el buscador de la tabla),
+  // para que nunca se quede sin buscar algo si no coincide con las reglas de arriba.
+  if (!criterios.length) {
+    const haystackCampos = ['Aliado', 'Técnico', 'Ciudad', 'Serie Medidor', 'Order ID', 'Fallos Detectados', 'Tipo de acta', 'Tipo Medida'];
+    resultado = resultado.filter(a => haystackCampos.some(c => (a[c] || '').toString().toLowerCase().includes(q)));
+    if (resultado.length) criterios.push(`texto libre: "${textoOriginal.trim()}"`);
+  }
+
   const esPromedio = /promedio|score/.test(q);
   const esConteo = /cu[aá]nt[oa]s?/.test(q);
 
