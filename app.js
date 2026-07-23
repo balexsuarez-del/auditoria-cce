@@ -146,6 +146,44 @@ function configurarNavegacion() {
       document.getElementById('view-' + btn.dataset.view).classList.add('is-active');
     });
   });
+
+  configurarBuscadorGlobal();
+}
+
+/**
+ * Buscador accesible desde cualquier vista (barra lateral): busca en todas
+ * las actas, te lleva a "Datos completos" con el filtro ya aplicado, y
+ * resalta la primera coincidencia para que la ubiques de inmediato.
+ */
+function configurarBuscadorGlobal() {
+  document.getElementById('formBuscadorGlobal').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = document.getElementById('inputBuscadorGlobal');
+    const consulta = input.value.trim();
+    if (!consulta) return;
+
+    state.filtros.texto = consulta.toLowerCase();
+    document.getElementById('filtroTexto').value = consulta;
+
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+    document.querySelector('[data-view="datos"]').classList.add('is-active');
+    document.getElementById('view-datos').classList.add('is-active');
+    renderTablaDatos();
+
+    const coincidencias = actasFiltradas();
+    if (!coincidencias.length) {
+      mostrarToast(`Sin resultados para "${consulta}".`, 'error');
+      return;
+    }
+    const primeraFila = document.querySelector(`#tablaDatos tbody tr[data-fila-id="${coincidencias[0]['#']}"]`);
+    if (primeraFila) {
+      primeraFila.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      primeraFila.classList.add('fila-resaltada');
+      setTimeout(() => primeraFila.classList.remove('fila-resaltada'), 2600);
+    }
+    mostrarToast(`${coincidencias.length} resultado(s) para "${consulta}".`, 'success');
+  });
 }
 
 // ============================================================================
@@ -154,14 +192,58 @@ function configurarNavegacion() {
 function abrirModal(id) { document.getElementById(id).classList.add('is-active'); }
 function cerrarModal(id) { document.getElementById(id).classList.remove('is-active'); }
 
+/**
+ * Hace scroll hasta la fila de una acta en "Datos completos" y la resalta
+ * un momento (para que el asistente "señale" visualmente de qué está
+ * hablando), antes de abrir el formulario de edición.
+ */
+function irYResaltarActa(id) {
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
+  document.querySelector('[data-view="datos"]').classList.add('is-active');
+  document.getElementById('view-datos').classList.add('is-active');
+
+  // Si hay filtros activos (aliado, supervisión, fechas) que podrían excluir
+  // justo la fila que se quiere señalar, se limpian para garantizar que
+  // siempre sea visible — si no, el resaltado fallaría en silencio.
+  const acta = state.actas.find(a => Number(a['#']) === Number(id));
+  const filtrosBloqueando =
+    (state.filtros.aliado && acta && acta['Aliado'] !== state.filtros.aliado) ||
+    (state.filtros.supervision && acta && (acta['Supervisión Manual (T)'] || '') !== state.filtros.supervision) ||
+    state.filtros.fechaDesde || state.filtros.fechaHasta;
+  if (filtrosBloqueando) {
+    state.filtros = { texto: '', aliado: '', supervision: '', fechaDesde: '', fechaHasta: '' };
+    document.getElementById('filtroTexto').value = '';
+    document.getElementById('filtroAliado').value = '';
+    document.getElementById('filtroSupervision').value = '';
+    document.getElementById('filtroFechaDesde').value = '';
+    document.getElementById('filtroFechaHasta').value = '';
+  }
+
+  renderTablaDatos();
+
+  const fila = document.querySelector(`#tablaDatos tbody tr[data-fila-id="${id}"]`);
+  if (fila) {
+    fila.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    fila.classList.add('fila-resaltada');
+    setTimeout(() => fila.classList.remove('fila-resaltada'), 2600);
+  }
+
+  setTimeout(() => abrirModalActa(id), fila ? 550 : 0);
+}
+
 // ============================================================================
 // ASISTENTE CCE — escaneo de discrepancias basado en reglas (sin IA externa)
 // ============================================================================
 function configurarAsistente() {
   const panel = document.getElementById('panelAsistente');
   const overlay = document.getElementById('asistenteOverlay');
+  const btnAsistente = document.getElementById('btnAsistente');
 
-  document.getElementById('btnAsistente').addEventListener('click', () => {
+  configurarArrastreBoton(btnAsistente);
+
+  btnAsistente.addEventListener('click', () => {
+    if (btnAsistente.dataset.arrastrado === '1') { btnAsistente.dataset.arrastrado = '0'; return; }
     panel.classList.add('is-active');
     overlay.classList.add('is-active');
     renderAsistente();
@@ -189,6 +271,66 @@ function configurarAsistente() {
   });
 }
 
+/**
+ * Deja arrastrar el botón flotante del asistente a cualquier parte de la
+ * pantalla (mouse y touch), recordando la última posición elegida.
+ */
+function configurarArrastreBoton(btn) {
+  const posGuardada = JSON.parse(localStorage.getItem('cce_asistente_pos') || 'null');
+  if (posGuardada) {
+    btn.style.left = posGuardada.left + 'px';
+    btn.style.top = posGuardada.top + 'px';
+    btn.style.right = 'auto';
+    btn.style.bottom = 'auto';
+  }
+
+  let arrastrando = false, offsetX = 0, offsetY = 0, movioLoSuficiente = false;
+
+  const iniciar = (clientX, clientY) => {
+    const rect = btn.getBoundingClientRect();
+    offsetX = clientX - rect.left;
+    offsetY = clientY - rect.top;
+    arrastrando = true;
+    movioLoSuficiente = false;
+  };
+
+  const mover = (clientX, clientY) => {
+    if (!arrastrando) return;
+    movioLoSuficiente = true;
+    let left = clientX - offsetX;
+    let top = clientY - offsetY;
+    left = Math.max(4, Math.min(window.innerWidth - btn.offsetWidth - 4, left));
+    top = Math.max(4, Math.min(window.innerHeight - btn.offsetHeight - 4, top));
+    btn.style.left = left + 'px';
+    btn.style.top = top + 'px';
+    btn.style.right = 'auto';
+    btn.style.bottom = 'auto';
+  };
+
+  const terminar = () => {
+    if (!arrastrando) return;
+    arrastrando = false;
+    if (movioLoSuficiente) {
+      btn.dataset.arrastrado = '1'; // evita que el click de soltar abra el panel
+      const rect = btn.getBoundingClientRect();
+      localStorage.setItem('cce_asistente_pos', JSON.stringify({ left: rect.left, top: rect.top }));
+    }
+  };
+
+  btn.addEventListener('mousedown', (e) => { iniciar(e.clientX, e.clientY); e.preventDefault(); });
+  document.addEventListener('mousemove', (e) => mover(e.clientX, e.clientY));
+  document.addEventListener('mouseup', terminar);
+
+  btn.addEventListener('touchstart', (e) => {
+    const t = e.touches[0]; iniciar(t.clientX, t.clientY);
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!arrastrando) return;
+    const t = e.touches[0]; mover(t.clientX, t.clientY);
+  }, { passive: true });
+  document.addEventListener('touchend', terminar);
+}
+
 /** Recorre las actas cargadas y agrupa discrepancias por tipo, con severidad. */
 function ejecutarDiagnostico() {
   const grupos = [];
@@ -198,6 +340,24 @@ function ejecutarDiagnostico() {
     titulo: 'Tensión inconsistente (R01)', icono: '⚡', severidad: 'alta',
     items: r01.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
       detalle: `${a['Ciudad']} · Serie ${a['Serie Medidor']} · ${a['Tipo Medida']}` }))
+  });
+
+  // Sugerencia de corrección: el patrón conocido "indirecta con tensión digitada
+  // en baja" — si V. Servicio quedó igual a V. Baja Trafo (en vez de V. Alta),
+  // se puede sugerir el valor correcto con un clic.
+  const sugerenciasR01 = state.actas.filter(a => {
+    if ((a['R01 Tensión'] || '').toString().toUpperCase() !== 'FALLA') return false;
+    if ((a['Tipo Medida'] || '').toLowerCase() !== 'indirecta') return false;
+    const vServ = parseFloat(a['V. Servicio']), vAlta = parseFloat(a['V. Alta Trafo']);
+    return !isNaN(vServ) && !isNaN(vAlta) && vServ < 100 && vAlta >= 1;
+  });
+  if (sugerenciasR01.length) grupos.push({
+    titulo: 'Sugerencia de corrección: V. Servicio parece estar en baja', icono: '💡', severidad: 'alta',
+    items: sugerenciasR01.map(a => ({
+      id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: `V. Servicio actual: ${a['V. Servicio']} · Sugerido (= V. Alta Trafo): ${a['V. Alta Trafo']}`,
+      sugerencia: { campo: 'V. Servicio', valor: a['V. Alta Trafo'] }
+    }))
   });
 
   const r03 = state.actas.filter(a => {
@@ -281,11 +441,87 @@ function ejecutarDiagnostico() {
       detalle: 'Falta Serie Medidor o Factor acta (K)' }))
   });
 
+  // Pendientes de supervisión manual, separando las más antiguas (más urgentes)
+  const HOY = new Date();
   const pendientes = state.actas.filter(a => (a['Supervisión Manual (T)'] || '') === 'PENDIENTE');
-  if (pendientes.length) grupos.push({
+  const pendientesAntiguos = pendientes.filter(a => {
+    const f = normalizarFechaCliente(a['Fecha']);
+    if (!f) return false;
+    const dias = Math.floor((HOY - new Date(f)) / 86400000);
+    return dias > 15;
+  });
+  if (pendientesAntiguos.length) grupos.push({
+    titulo: 'Pendientes con más de 15 días sin revisar', icono: '⏰', severidad: 'alta',
+    items: pendientesAntiguos.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: `Registrada el ${normalizarFechaCliente(a['Fecha'])} — lleva más de 15 días esperando revisión` }))
+  });
+  const pendientesRecientes = pendientes.filter(a => !pendientesAntiguos.includes(a));
+  if (pendientesRecientes.length) grupos.push({
     titulo: 'Pendientes de supervisión manual', icono: '⏳', severidad: 'baja',
-    items: pendientes.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+    items: pendientesRecientes.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
       detalle: normalizarFechaCliente(a['Fecha']) }))
+  });
+
+  // Outliers: Score muy por debajo del promedio de su mismo tipo de medida
+  const scorePorTipo = {};
+  state.actas.forEach(a => {
+    const tipo = (a['Tipo Medida'] || '').trim();
+    const s = parseFloat(a['Score']);
+    if (!tipo || isNaN(s)) return;
+    (scorePorTipo[tipo] = scorePorTipo[tipo] || []).push(s);
+  });
+  const promedioPorTipo = {};
+  Object.keys(scorePorTipo).forEach(t => {
+    promedioPorTipo[t] = scorePorTipo[t].reduce((s, v) => s + v, 0) / scorePorTipo[t].length;
+  });
+  const outliers = state.actas.filter(a => {
+    const tipo = (a['Tipo Medida'] || '').trim();
+    const s = parseFloat(a['Score']);
+    if (!tipo || isNaN(s) || promedioPorTipo[tipo] === undefined) return false;
+    return s <= promedioPorTipo[tipo] - 20;
+  });
+  if (outliers.length) grupos.push({
+    titulo: 'Score muy por debajo del promedio de su tipo', icono: '📉', severidad: 'media',
+    items: outliers.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+      detalle: `Score ${a['Score']} vs promedio ${promedioPorTipo[(a['Tipo Medida']||'').trim()].toFixed(1)} de "${a['Tipo Medida']}"` }))
+  });
+
+  // Cruce Hallazgo (formulario) vs Supervisión Manual: si hay un hallazgo reportado
+  // para esa serie pero la Manual dice CONFORME, hay una posible inconsistencia.
+  if (state.hallazgosDetalle && state.hallazgosDetalle.length) {
+    const seriesConHallazgo = new Set(state.hallazgosDetalle.map(h => (h.serie || '').toString().trim()).filter(Boolean));
+    const inconsistentes = state.actas.filter(a =>
+      seriesConHallazgo.has((a['Serie Medidor'] || '').toString().trim()) &&
+      (a['Supervisión Manual (T)'] || '') === 'CONFORME'
+    );
+    if (inconsistentes.length) grupos.push({
+      titulo: 'Hallazgo reportado pero Manual dice CONFORME', icono: '🧭', severidad: 'media',
+      items: inconsistentes.map(a => ({ id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']}`,
+        detalle: `Serie ${a['Serie Medidor']} tiene un hallazgo en el formulario, pero quedó marcada CONFORME` }))
+    });
+  }
+
+  // Patrón repetido: mismo aliado con el mismo tipo de falla 3+ veces (candidato a capacitación)
+  const patronesPorAliado = {};
+  state.actas.forEach(a => {
+    const aliado = a['Aliado'];
+    if (!aliado) return;
+    ['R01 Tensión', 'R03 Formato'].forEach(campo => {
+      const v = (a[campo] || '').toString().toUpperCase();
+      if (v && v !== 'OK' && v !== 'PENDIENTE') {
+        const clave = aliado + '|' + campo;
+        (patronesPorAliado[clave] = patronesPorAliado[clave] || []).push(a);
+      }
+    });
+  });
+  const patronesFrecuentes = Object.entries(patronesPorAliado).filter(([, arr]) => arr.length >= 3);
+  if (patronesFrecuentes.length) grupos.push({
+    titulo: 'Patrón repetido — candidato a capacitación', icono: '🎓', severidad: 'media',
+    items: patronesFrecuentes.map(([clave, arr]) => {
+      const [aliado, campo] = clave.split('|');
+      return { id: arr[0]['#'], texto: `${aliado} — ${campo} fallando ${arr.length} veces`,
+        detalle: `Actas # ${arr.map(a => a['#']).join(', ')}` };
+    })
   });
 
   return grupos;
@@ -315,12 +551,16 @@ function renderAsistente() {
       <h4>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></h4>`;
     g.items.slice(0, 25).forEach((it, idx) => {
       const puedeEliminar = it.idsEliminables && it.idsEliminables.length;
+      const puedeCorregir = it.sugerencia;
       html += `<div class="hallazgo-item sev-${g.severidad}" data-acta-id="${it.id}">
         <b>${escapeHtml(it.texto)}</b>
         <span class="hallazgo-detalle">${escapeHtml(it.detalle)}</span>
         ${puedeEliminar ? `<button class="btn-eliminar-duplicado" type="button"
             data-ids="${it.idsEliminables.join(',')}" data-grupo="${g.titulo}-${idx}">
             🗑 Conservar #${it.id} y eliminar ${it.idsEliminables.length} duplicado(s)</button>` : ''}
+        ${puedeCorregir ? `<button class="btn-aplicar-sugerencia" type="button"
+            data-id="${it.id}" data-campo="${escapeHtml(it.sugerencia.campo)}" data-valor="${escapeHtml(it.sugerencia.valor)}">
+            💡 Aplicar: ${escapeHtml(it.sugerencia.campo)} = ${escapeHtml(it.sugerencia.valor)}</button>` : ''}
       </div>`;
     });
     if (g.items.length > 25) html += `<p class="panel-note">…y ${g.items.length - 25} más.</p>`;
@@ -331,15 +571,11 @@ function renderAsistente() {
 
   cont.querySelectorAll('.hallazgo-item').forEach(el => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.btn-eliminar-duplicado')) return; // el botón maneja su propio click
+      if (e.target.closest('.btn-eliminar-duplicado') || e.target.closest('.btn-aplicar-sugerencia')) return;
       const id = Number(el.dataset.actaId);
       document.getElementById('panelAsistente').classList.remove('is-active');
       document.getElementById('asistenteOverlay').classList.remove('is-active');
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
-      document.querySelector('[data-view="datos"]').classList.add('is-active');
-      document.getElementById('view-datos').classList.add('is-active');
-      abrirModalActa(id);
+      irYResaltarActa(id);
     });
   });
 
@@ -362,6 +598,29 @@ function renderAsistente() {
         mostrarToast('Error al eliminar: ' + err.message, 'error');
         btn.disabled = false;
         btn.textContent = '🗑 Reintentar';
+      }
+    });
+  });
+
+  cont.querySelectorAll('.btn-aplicar-sugerencia').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.id);
+      const campo = btn.dataset.campo;
+      const valor = btn.dataset.valor;
+      if (!confirm(`¿Aplicar la corrección sugerida en la acta #${id}? Se cambiará "${campo}" a "${valor}".`)) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Aplicando…';
+      try {
+        await postAccion('updateActa', { id, cambios: { [campo]: valor }, usuario: state.usuario });
+        mostrarToast(`Corrección aplicada en la acta #${id}.`, 'success');
+        await cargarDatos(false);
+        renderAsistente();
+      } catch (err) {
+        mostrarToast('Error al aplicar: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '💡 Reintentar';
       }
     });
   });
@@ -465,11 +724,7 @@ function renderRespuestaPregunta(pregunta) {
       const id = Number(el.dataset.actaId);
       document.getElementById('panelAsistente').classList.remove('is-active');
       document.getElementById('asistenteOverlay').classList.remove('is-active');
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('is-active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('is-active'));
-      document.querySelector('[data-view="datos"]').classList.add('is-active');
-      document.getElementById('view-datos').classList.add('is-active');
-      abrirModalActa(id);
+      irYResaltarActa(id);
     });
   });
 
@@ -556,6 +811,8 @@ function renderDashboard() {
   ], 'dona');
 
   renderLineaTendencia('chartLinea', calcularActasPorMes());
+  renderAreaChart('chartArea', calcularScorePromedioPorMes(), '');
+  renderHistograma('chartHistograma');
 
   renderPanelFlexible('chartApilada', k.porTipoMedida.map((t, i) => ({
     etiqueta: t.tipo, valor: t.actas, clase: ['', 'accent', 'success'][i % 3]
@@ -755,6 +1012,103 @@ function renderLineaTendencia(contenedorId, puntos) {
   </svg>`;
 
   cont.innerHTML = svg;
+}
+
+/** Agrupa las actas por mes y calcula el Score promedio de cada mes. */
+function calcularScorePromedioPorMes() {
+  const grupos = {};
+  state.actas.forEach(a => {
+    const mes = normalizarFechaCliente(a['Fecha']).slice(0, 7);
+    const score = parseFloat(a['Score']);
+    if (!mes || isNaN(score)) return;
+    (grupos[mes] = grupos[mes] || []).push(score);
+  });
+  return Object.keys(grupos).sort().map(mes => ({
+    mes, valor: grupos[mes].reduce((s, v) => s + v, 0) / grupos[mes].length
+  }));
+}
+
+/**
+ * Gráfica de área — como la de línea, pero pensada para mostrar la
+ * evolución de un promedio/indicador (no un conteo) con el área rellena
+ * dando sensación de "volumen acumulado" a simple vista.
+ */
+function renderAreaChart(contenedorId, puntos, sufijo) {
+  const cont = document.getElementById(contenedorId);
+  if (!puntos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+
+  const w = 320, h = 160, padding = 26;
+  const max = Math.max(...puntos.map(p => p.valor), 1);
+  const min = Math.min(...puntos.map(p => p.valor), 0);
+  const rango = (max - min) || 1;
+  const pasoX = puntos.length > 1 ? (w - padding * 2) / (puntos.length - 1) : 0;
+
+  const coords = puntos.map((p, i) => {
+    const x = padding + i * pasoX;
+    const y = h - padding - ((p.valor - min) / rango) * (h - padding * 2);
+    return { x, y, p };
+  });
+
+  const linea = coords.map(c => `${c.x},${c.y}`).join(' ');
+  const area = `${padding},${h - padding} ${linea} ${coords[coords.length - 1].x},${h - padding}`;
+
+  const puntosSvg = coords.map(c => `
+    <circle cx="${c.x}" cy="${c.y}" r="4" fill="var(--orange-500)"></circle>
+    <text x="${c.x}" y="${c.y - 10}" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--ink-700)">${c.p.valor.toFixed(1)}${sufijo || ''}</text>
+    <text x="${c.x}" y="${h - 8}" text-anchor="middle" font-size="9.5" fill="var(--ink-500)">${c.p.mes.slice(5)}/${c.p.mes.slice(2, 4)}</text>
+  `).join('');
+
+  const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" preserveAspectRatio="xMidYMid meet">
+    <polygon points="${area}" fill="var(--orange-100)"></polygon>
+    <polyline points="${linea}" fill="none" stroke="var(--orange-500)" stroke-width="2.5"></polyline>
+    ${puntosSvg}
+  </svg>`;
+
+  cont.innerHTML = svg;
+}
+
+/**
+ * Histograma — agrupa el Score de todas las actas en rangos (0-59, 60-69...
+ * 90-100) y muestra cuántas actas caen en cada rango. Es la forma más clara
+ * de ver si tus actas se concentran en scores altos o bajos.
+ */
+function renderHistograma(contenedorId) {
+  const cont = document.getElementById(contenedorId);
+  const cortes = [
+    { desde: 0, hasta: 59, etiqueta: '0-59' },
+    { desde: 60, hasta: 69, etiqueta: '60-69' },
+    { desde: 70, hasta: 79, etiqueta: '70-79' },
+    { desde: 80, hasta: 89, etiqueta: '80-89' },
+    { desde: 90, hasta: 100, etiqueta: '90-100' }
+  ];
+  const conteo = cortes.map(c => ({ ...c, cantidad: 0 }));
+
+  state.actas.forEach(a => {
+    const score = parseFloat(a['Score']);
+    if (isNaN(score)) return;
+    const bucket = conteo.find(c => score >= c.desde && score <= c.hasta);
+    if (bucket) bucket.cantidad++;
+  });
+
+  if (!conteo.some(c => c.cantidad > 0)) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+
+  const w = 320, h = 160, padding = 30;
+  const max = Math.max(...conteo.map(c => c.cantidad), 1);
+  const anchoBarra = (w - padding * 2) / conteo.length;
+
+  const barras = conteo.map((c, i) => {
+    const alturaBarra = (c.cantidad / max) * (h - padding * 2);
+    const x = padding + i * anchoBarra;
+    const y = h - padding - alturaBarra;
+    const color = c.desde < 70 ? 'var(--red-600)' : c.desde < 90 ? 'var(--amber-700)' : 'var(--green-600)';
+    return `
+      <rect x="${x + 4}" y="${y}" width="${anchoBarra - 8}" height="${alturaBarra}" fill="${color}" rx="3"></rect>
+      <text x="${x + anchoBarra / 2}" y="${y - 6}" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-700)">${c.cantidad}</text>
+      <text x="${x + anchoBarra / 2}" y="${h - 10}" text-anchor="middle" font-size="9.5" fill="var(--ink-500)">${c.etiqueta}</text>
+    `;
+  }).join('');
+
+  cont.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" preserveAspectRatio="xMidYMid meet">${barras}</svg>`;
 }
 
 /**
@@ -1288,6 +1642,7 @@ function renderTablaDatos() {
     .sort((a, b) => (b['#'] || 0) - (a['#'] || 0))
     .forEach(acta => {
       const tr = document.createElement('tr');
+      tr.dataset.filaId = acta['#'];
       tr.innerHTML = columnas.map(c => `<td>${celdaHtml(c, acta[c])}</td>`).join('') +
         `<td class="row-actions">
            <button class="btn btn-ghost btn-icon" data-editar="${acta['#']}">✎</button>
