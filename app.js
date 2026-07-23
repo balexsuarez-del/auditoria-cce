@@ -1073,6 +1073,24 @@ function interpretarPregunta(textoOriginal) {
 }
 
 function renderRespuestaPregunta(pregunta) {
+  const q = pregunta.toLowerCase();
+
+  // Si claramente es un pedido de ranking/cruce/gráfica ("top de fallas",
+  // "no conformidad por aliado", "gráfica de ciudad"...), se resuelve con el
+  // mismo motor de "Buscar y graficar" en vez de tratarlo como búsqueda de
+  // actas puntuales — así no importa en cuál caja del asistente lo escribas.
+  const esRankingDeFallas = /top|m[aá]s comunes?|ranking|frecuente/.test(q) && /falla|error/.test(q);
+  const esCruce = ESTADOS_RECONOCIDOS.some(e => e.claves.some(k => q.includes(k))) &&
+                  CAMPOS_AGRUPABLES.some(c => c.claves.some(k => q.includes(k))) && q.includes('por');
+  const esPedidoDeGrafica = /gr[aá]fica|graficar|tabla de/.test(q);
+
+  if (esRankingDeFallas || esCruce || esPedidoDeGrafica) {
+    renderBuscadorGraficas();
+    document.getElementById('inputBuscadorGraficas').value = pregunta;
+    ejecutarBusquedaGrafica(pregunta);
+    return;
+  }
+
   const { resultado, criterios, esPromedio, esConteo } = interpretarPregunta(pregunta);
   const cont = document.getElementById('asistenteContenido');
 
