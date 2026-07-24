@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
   configurarSelectorColumnas();
   configurarVistas();
   aplicarVisibilidadPaneles();
+  aplicarOrdenPaneles();
 
   document.getElementById('btnRefrescar').addEventListener('click', () => cargarDatos(true));
 
@@ -448,10 +449,12 @@ const CAMPOS_SUPERVISION = [
   { claves: ['hallazgo 3'], campo: 'Tipo Hallazgo 3' },
   { claves: ['no conformidad'], campo: 'No Conformidad 1' },
   { claves: ['condicion tecnica', 'condición técnica', 'condicion técnica'], campo: 'Condicion Tecnica' },
-  { claves: ['zona'], campo: 'Zona' },
+  { claves: ['zona', 'departamento'], campo: 'Zona' },
   { claves: ['supervisor'], campo: 'Supervisor' },
   { claves: ['tipo inspeccion', 'tipo de inspección', 'inspeccion'], campo: 'Tipo Inspeccion' },
-  { claves: ['tipo os', 'tipo de os'], campo: 'Tipo OS Programada' }
+  { claves: ['tipo os', 'tipo de os'], campo: 'Tipo OS Programada' },
+  { claves: ['medidor', 'serie'], campo: 'Serie Medidor' },
+  { claves: ['acta', 'item', 'numero os', 'número os', 'orden de servicio', ' os '], campo: 'Numero OS' }
 ];
 
 /** Filtra cualquier arreglo de registros por Tipo de Medida, cruzando por Serie Medidor contra las actas. */
@@ -716,12 +719,58 @@ function ejecutarBusquedaGrafica(texto) {
     const tipoMedidaMatch = ['semidirecta', 'indirecta', 'directa'].find(t => q.includes(t));
     if (tipoMedidaMatch) fuente = filtrarPorTipoMedidaCruzado(fuente, 'Serie Medidor', tipoMedidaMatch);
 
+    // Filtro de fecha (mes/año), igual que ya funciona para las actas
+    const MESES_ES = { enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+      julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12' };
+    const mesFormulario = Object.keys(MESES_ES).find(m => q.includes(m));
+    if (mesFormulario) {
+      const mm = MESES_ES[mesFormulario];
+      fuente = fuente.filter(s => (s['Fecha Ejecucion OS'] || '').toString().slice(5, 7) === mm);
+    }
+    const anioFormularioMatch = q.match(/20\d{2}/);
+    if (anioFormularioMatch) {
+      fuente = fuente.filter(s => (s['Fecha Ejecucion OS'] || '').toString().startsWith(anioFormularioMatch[0]));
+    }
+
+    // Consulta directa por número de medidor o de OS/acta (ej. "formulario medidor 2222149035")
+    const numeroMatch = q.match(/\b\d{5,}\b/);
+    if (numeroMatch) {
+      fuente = fuente.filter(s =>
+        (s['Serie Medidor'] || '').toString().includes(numeroMatch[0]) ||
+        (s['Numero OS'] || '').toString().includes(numeroMatch[0]) ||
+        (s['ID'] || '').toString() === numeroMatch[0]
+      );
+    }
+
     const campoInfoSup = CAMPOS_SUPERVISION.find(c => c.claves.some(k => q.includes(k)));
-    if (!campoInfoSup) {
+    if (!campoInfoSup && !numeroMatch) {
       resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
         Del formulario reconozco: aliado, técnico, conforme, hallazgo 1/2/3, no conformidad,
-        condición técnica, zona, supervisor, tipo de inspección, tipo de OS. Puedes agregar
-        semidirecta/indirecta para filtrar por tipo de medida.</div>`;
+        condición técnica, zona/departamento, supervisor, tipo de inspección, tipo de OS,
+        medidor/serie, acta/item/OS. Puedes agregar semidirecta/indirecta, un mes o un año
+        para filtrar. Ej: "formulario medidor 2222149035", "formulario zona julio".</div>`;
+      return;
+    }
+
+    // Si escribió un número (medidor/OS) sin pedir agrupar por un campo, se muestran esas
+    // respuestas como tabla directamente (no tiene sentido "graficar" un solo registro).
+    if (numeroMatch && !campoInfoSup) {
+      if (!fuente.length) {
+        resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🔍</span>No encontré respuestas del formulario con "${numeroMatch[0]}".</div>`;
+        return;
+      }
+      const columnas = ['ID', 'Fecha Ejecucion OS', 'Aliado', 'Tecnico', 'Serie Medidor', 'Numero OS', 'Conforme', 'Tipo Hallazgo 1', 'Observacion General'];
+      const filasHtml = fuente.slice(0, 30).map(s => `<tr>${columnas.map(c => `<td>${escapeHtml(s[c])}</td>`).join('')}</tr>`).join('');
+      resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+        <h4>Resultados para "${escapeHtml(numeroMatch[0])}" <span class="severidad-pill sev-baja">${fuente.length}</span></h4>
+        <div class="table-wrap" style="max-height:320px;">
+          <table class="data-table" style="width:100%;">
+            <thead><tr>${columnas.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>${filasHtml}</tbody>
+          </table>
+        </div>
+        ${fuente.length > 30 ? `<p class="panel-note">…y ${fuente.length - 30} más.</p>` : ''}
+      </div>`;
       return;
     }
 
@@ -1941,6 +1990,12 @@ function configurarVistas() {
     abrirModal('modalVistas');
   });
   document.getElementById('btnCerrarVistas').addEventListener('click', () => cerrarModal('modalVistas'));
+  document.getElementById('btnRestablecerOrden').addEventListener('click', () => {
+    guardarOrdenPaneles(TODOS_LOS_PANELES.slice());
+    aplicarOrdenPaneles();
+    pintarListaPaneles();
+    mostrarToast('Orden restablecido.', 'success');
+  });
 
   document.querySelectorAll('#modalVistas [data-accion]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2018,18 +2073,64 @@ function configurarSoloMisPaneles() {
   actualizarTextoBoton(); // deja el texto correcto si ya estaba activado desde antes
 }
 
+function obtenerOrdenPaneles() {
+  try {
+    const guardado = JSON.parse(localStorage.getItem('cce_orden_paneles'));
+    if (Array.isArray(guardado) && guardado.length) {
+      // Si se agregó un panel nuevo después de guardar el orden, se añade al final
+      const faltantes = TODOS_LOS_PANELES.filter(n => !guardado.includes(n));
+      return [...guardado.filter(n => TODOS_LOS_PANELES.includes(n)), ...faltantes];
+    }
+  } catch (e) { /* usa el orden por defecto */ }
+  return TODOS_LOS_PANELES.slice();
+}
+function guardarOrdenPaneles(orden) {
+  localStorage.setItem('cce_orden_paneles', JSON.stringify(orden));
+}
+
+/** Reordena los paneles fijos dentro del grid del Dashboard según el orden guardado. */
+function aplicarOrdenPaneles() {
+  const grid = document.getElementById('panelGridDashboard');
+  obtenerOrdenPaneles().forEach(nombre => {
+    const el = grid.querySelector(`[data-panel-nombre="${CSS.escape(nombre)}"]`);
+    if (el) grid.appendChild(el); // mover al final en el orden correcto va reordenando todo
+  });
+}
+
+function moverPanelEnOrden(nombre, direccion) {
+  const orden = obtenerOrdenPaneles();
+  const idx = orden.indexOf(nombre);
+  const nuevoIdx = idx + direccion;
+  if (nuevoIdx < 0 || nuevoIdx >= orden.length) return;
+  [orden[idx], orden[nuevoIdx]] = [orden[nuevoIdx], orden[idx]];
+  guardarOrdenPaneles(orden);
+  aplicarOrdenPaneles();
+  pintarListaPaneles();
+}
+
 function pintarListaPaneles() {
   const cont = document.getElementById('listaPanelesVista');
   const visibles = obtenerPanelesVisibles();
-  cont.innerHTML = TODOS_LOS_PANELES.map(nombre => `
-    <label><input type="checkbox" value="${escapeHtml(nombre)}" ${visibles.includes(nombre) ? 'checked' : ''}> ${escapeHtml(nombre)}</label>
+  const orden = obtenerOrdenPaneles();
+  cont.innerHTML = orden.map((nombre, i) => `
+    <div class="fila-panel-vista">
+      <label><input type="checkbox" value="${escapeHtml(nombre)}" ${visibles.includes(nombre) ? 'checked' : ''}> ${escapeHtml(nombre)}</label>
+      <div class="botones-orden">
+        <button type="button" class="btn-orden" data-mover="${escapeHtml(nombre)}" data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Subir">▲</button>
+        <button type="button" class="btn-orden" data-mover="${escapeHtml(nombre)}" data-dir="1" ${i === orden.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>
+      </div>
+    </div>
   `).join('');
+
   cont.querySelectorAll('input[type="checkbox"]').forEach(chk => {
     chk.addEventListener('change', () => {
       const seleccionados = [...cont.querySelectorAll('input:checked')].map(c => c.value);
       guardarPanelesVisibles(seleccionados);
       aplicarVisibilidadPaneles();
     });
+  });
+  cont.querySelectorAll('.btn-orden').forEach(btn => {
+    btn.addEventListener('click', () => moverPanelEnOrden(btn.dataset.mover, Number(btn.dataset.dir)));
   });
 }
 
@@ -2045,6 +2146,7 @@ function guardarVista(slot) {
 
   vistas[slot] = {
     paneles: obtenerPanelesVisibles(),
+    orden: obtenerOrdenPaneles(),
     tipos,
     columnas: obtenerColumnasVisibles(),
     guardadaEl: new Date().toLocaleString('es-CO')
@@ -2060,10 +2162,12 @@ function cargarVista(slot) {
   if (!vista) { mostrarToast(`La Vista ${slot} todavía está vacía.`, 'error'); return; }
 
   guardarPanelesVisibles(vista.paneles || TODOS_LOS_PANELES.slice());
+  if (vista.orden) guardarOrdenPaneles(vista.orden);
   Object.keys(vista.tipos || {}).forEach(target => localStorage.setItem('cce_vista_' + target, vista.tipos[target]));
   if (vista.columnas) guardarColumnasVisibles(vista.columnas);
 
   aplicarVisibilidadPaneles();
+  aplicarOrdenPaneles();
   configurarSelectoresVista(); // refresca los <select> con los tipos guardados
   renderDashboard();
   renderTablaDatos();
