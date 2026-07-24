@@ -9,6 +9,7 @@ const state = {
   kpis: null,
   hallazgosPorAliado: [],
   hallazgosDetalle: [],
+  supervisionDetalle: [],
   usuario: localStorage.getItem('cce_usuario') || '',
   pin: localStorage.getItem('cce_pin') || '',
   filtros: { texto: '', aliado: '', supervision: '', fechaDesde: '', fechaHasta: '' },
@@ -114,6 +115,7 @@ async function intentarEntrar() {
     state.kpis = data.kpis;
     state.hallazgosPorAliado = data.hallazgosPorAliado || [];
     state.hallazgosDetalle = data.hallazgosDetalle || [];
+    state.supervisionDetalle = data.supervisionDetalle || [];
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
 
@@ -1256,6 +1258,7 @@ async function cargarDatos(mostrarError) {
     state.kpis = data.kpis;
     state.hallazgosPorAliado = data.hallazgosPorAliado || [];
     state.hallazgosDetalle = data.hallazgosDetalle || [];
+    state.supervisionDetalle = data.supervisionDetalle || [];
 
     renderTodo();
     marcarSync('live', 'Actualizado ' + new Date().toLocaleTimeString('es-CO'));
@@ -1355,7 +1358,46 @@ function renderDashboard() {
     panelHallazgos.style.display = 'none';
   }
 
+  // Supervisión Manual completa (opcional — solo si la pestaña "Supervision" existe)
+  const panelSupervision = document.getElementById('panelSupervision');
+  if (state.supervisionDetalle && state.supervisionDetalle.length) {
+    panelSupervision.style.display = '';
+    const filtradas = supervisionFiltrada();
+    const conteo = { Conforme: 0, 'No conforme': 0 };
+    filtradas.forEach(s => {
+      const v = (s['Conforme'] || '').toString().trim();
+      if (v === 'Conforme' || v === 'No conforme') conteo[v]++;
+    });
+    renderPanelFlexible('chartSupervision', [
+      { etiqueta: 'Conforme', valor: conteo['Conforme'], clase: 'success' },
+      { etiqueta: 'No conforme', valor: conteo['No conforme'], clase: 'danger' }
+    ], 'dona');
+  } else {
+    panelSupervision.style.display = 'none';
+  }
+
   renderPanelesPersonalizados();
+}
+
+/**
+ * Filtra el detalle de "Supervision" (formulario manual completo) según el
+ * selector de Tipo de Medida, cruzando por Serie Medidor con las actas de
+ * "Datos completos" — igual que ya se hace con el panel de Hallazgos.
+ */
+function supervisionFiltrada() {
+  const tipoElegido = document.getElementById('filtroSupervisionTipo').value;
+  if (!tipoElegido) return state.supervisionDetalle;
+
+  const serieATipo = {};
+  state.actas.forEach(a => {
+    const serie = (a['Serie Medidor'] || '').toString().trim();
+    if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
+  });
+
+  return state.supervisionDetalle.filter(s => {
+    const serie = (s['Serie Medidor'] || '').toString().trim();
+    return serieATipo[serie] === tipoElegido;
+  });
 }
 
 /**
@@ -1894,6 +1936,9 @@ function configurarFiltros() {
   });
   document.getElementById('filtroHallazgosTipo').addEventListener('change', e => {
     state.filtroHallazgosTipo = e.target.value;
+    renderDashboard();
+  });
+  document.getElementById('filtroSupervisionTipo').addEventListener('change', () => {
     renderDashboard();
   });
   document.getElementById('btnNuevaActa').addEventListener('click', () => abrirModalActa(null));

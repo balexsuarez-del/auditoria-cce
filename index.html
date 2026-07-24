@@ -225,6 +225,26 @@
           <div id="chartHallazgos" class="chart-bars"></div>
           <p class="panel-note">Fuente: formulario de supervisión (Microsoft Forms). El filtro cruza la serie del medidor con el tipo de medida registrado en Datos completos.</p>
         </div>
+        <div class="panel" id="panelSupervision" data-panel-nombre="Supervisión Manual (formulario)" style="display:none;">
+          <div class="panel-header-row">
+            <h3>Supervisión Manual — Conforme/No conforme</h3>
+            <select id="filtroSupervisionTipo" class="select-compact">
+              <option value="">Todos los tipos</option>
+              <option value="semidirecta">Semidirecta</option>
+              <option value="indirecta">Indirecta</option>
+            </select>
+          </div>
+          <div class="panel-header-row" style="margin-top:-8px;">
+            <span></span>
+            <select class="select-compact selector-vista" data-target="chartSupervision">
+              <option value="dona">Dona</option>
+              <option value="barras">Barras</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
+          <div id="chartSupervision" class="chart-svg-wrap"></div>
+          <p class="panel-note">Fuente: formulario completo de supervisión manual (Microsoft Forms). El filtro cruza la serie del medidor con el Tipo de Medida de Datos completos — las series sin coincidencia se excluyen al filtrar.</p>
+        </div>
       </div>
     </section>
 
