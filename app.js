@@ -488,7 +488,7 @@ function agregarPorCategoria(campo, actas) {
  * Detectados" — para responder "top de fallas más comunes" sin necesitar
  * una columna única que ya traiga esa clasificación.
  */
-function calcularTopFallas(limite) {
+function calcularTopFallas(limite, actasFuente) {
   const conteo = {};
   const sumar = (etiqueta) => { conteo[etiqueta] = (conteo[etiqueta] || 0) + 1; };
 
@@ -507,7 +507,7 @@ function calcularTopFallas(limite) {
     { buscar: 'duplicad', etiqueta: 'Posible duplicado' }
   ];
 
-  state.actas.forEach(a => {
+  (actasFuente || state.actas).forEach(a => {
     reglasSimples.forEach(r => {
       const v = (a[r.campo] || '').toString().toUpperCase();
       if (v && v !== 'OK' && v !== 'PENDIENTE') sumar(r.etiqueta);
@@ -606,19 +606,34 @@ function renderPanelesPersonalizados() {
   });
 }
 
+/** Sugerencias rápidas que se muestran como botones al abrir el buscador guiado.
+ *  Cada una está probada para que dispare una rama específica y válida del motor. */
+const SUGERENCIAS_GUIADAS = [
+  'Supervisión Manual', 'No conformidad por aliado', 'Top de fallas más comunes',
+  'Tipo Medida', 'Score', 'Formulario conforme por aliado'
+];
+
 /** El sub-panel donde escribes lo que quieres ver y el asistente lo busca y grafica/tabula solo. */
 function renderBuscadorGraficas() {
   const cont = document.getElementById('asistenteContenido');
   cont.innerHTML = `
     <div class="asistente-resumen">
       <span class="emoji">📈</span>
-      <div><strong>Busca, grafica o tabula lo que necesites</strong>
-      <span>Ej: "top fallas", "no conformidad por aliado", "formulario conforme por aliado", "formulario zona semidirecta"…</span></div>
+      <div><strong>¿Qué quieres ver?</strong>
+      <span>Elige una sugerencia, o escribe la tuya — puedes acotar por fecha abajo antes de pedirla</span></div>
     </div>
-    <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 14px;">
-      <input type="text" id="inputBuscadorGraficas" placeholder="Ej: formulario hallazgo 1, formulario conforme indirecta…">
+    <div class="preferencia-opciones" style="margin-bottom:12px;">
+      ${SUGERENCIAS_GUIADAS.map(s => `<button type="button" class="btn-opcion-grafica btn-sugerencia-guiada" data-consulta="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
+    </div>
+    <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 8px;">
+      <input type="text" id="inputBuscadorGraficas" placeholder="O escribe la tuya: formulario hallazgo 1, no conformidad por aliado…">
       <button type="submit" class="btn btn-primary btn-icon">Buscar</button>
     </form>
+    <div class="asistente-pregunta" style="padding:0 0 14px;">
+      <label class="toolbar-date-label" style="color:var(--ink-500);">Desde <input type="date" id="fechaGlobalDesde"></label>
+      <label class="toolbar-date-label" style="color:var(--ink-500);">Hasta <input type="date" id="fechaGlobalHasta"></label>
+      <button type="button" class="btn btn-ghost btn-icon" id="btnLimpiarFechaGlobal">✕ Quitar fechas</button>
+    </div>
     <div id="resultadoBuscadorGraficas"></div>
     <button class="btn btn-ghost btn-block" id="btnVolverDesdeBuscador" style="margin-top:10px;">← Volver al diagnóstico</button>
   `;
@@ -628,6 +643,44 @@ function renderBuscadorGraficas() {
     const texto = document.getElementById('inputBuscadorGraficas').value.trim();
     if (!texto) return;
     ejecutarBusquedaGrafica(texto);
+  });
+
+  cont.querySelectorAll('.btn-sugerencia-guiada').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('inputBuscadorGraficas').value = btn.dataset.consulta;
+      ejecutarBusquedaGrafica(btn.dataset.consulta);
+    });
+  });
+
+  document.getElementById('btnLimpiarFechaGlobal').addEventListener('click', () => {
+    document.getElementById('fechaGlobalDesde').value = '';
+    document.getElementById('fechaGlobalHasta').value = '';
+    const texto = document.getElementById('inputBuscadorGraficas').value.trim();
+    if (texto) ejecutarBusquedaGrafica(texto);
+  });
+  ['fechaGlobalDesde', 'fechaGlobalHasta'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      const texto = document.getElementById('inputBuscadorGraficas').value.trim();
+      if (texto) ejecutarBusquedaGrafica(texto); // si ya había una consulta, se re-ejecuta con el nuevo rango
+    });
+  });
+}
+
+/**
+ * Recorta cualquier lista de registros al rango Desde/Hasta elegido en el
+ * buscador guiado (si hay alguno puesto), usando el campo de fecha que
+ * corresponda a esa fuente de datos.
+ */
+function aplicarRangoFechaGlobal(registros, campoFecha) {
+  const desde = document.getElementById('fechaGlobalDesde') ? document.getElementById('fechaGlobalDesde').value : '';
+  const hasta = document.getElementById('fechaGlobalHasta') ? document.getElementById('fechaGlobalHasta').value : '';
+  if (!desde && !hasta) return registros;
+  return registros.filter(r => {
+    const f = (r[campoFecha] || '').toString().slice(0, 10);
+    if (!f) return false;
+    if (desde && f < desde) return false;
+    if (hasta && f > hasta) return false;
+    return true;
   });
 }
 
@@ -664,47 +717,9 @@ function ejecutarBusquedaGrafica(texto) {
   const idContenedor = 'graficaBusquedaResultado';
   const pideTabla = /\btabla\b/.test(q);
 
-  // 1) "Top de fallas/errores más comunes"
-  if (/top|m[aá]s comunes?|ranking|frecuente/.test(q) && /falla|error/.test(q)) {
-    const datos = calcularTopFallas(10);
-    if (!datos.length) {
-      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No encontré fallas registradas todavía.</div>`;
-      return;
-    }
-    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
-      <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
-      <p class="panel-note" style="margin:0 0 10px;">💡 Ranking — siempre se ve mejor como barras que como dona.</p>
-      <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes' })}'>📌 Fijar en el Dashboard</button>
-    </div>`;
-    if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
-    else { const max = Math.max(...datos.map(d => d.valor), 1); renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max); }
-    conectarBotonFijarPanel(resultadoCont);
-    return;
-  }
-
-  // 2) Cruce "<estado> por <campo>" — ej. "no conformidad por aliado", "desacuerdos por técnico"
-  const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
-  const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
-  if (estadoInfo && agrupableInfo && q.includes('por')) {
-    const filtradas = state.actas.filter(a => (a[estadoInfo.campo] || '').toString().toUpperCase() === estadoInfo.valor);
-    const datos = agregarPorCategoria(agrupableInfo.campo, filtradas);
-    if (!datos.length) {
-      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No hay actas en "${estadoInfo.valor}" para agrupar por ${escapeHtml(agrupableInfo.campo)}.</div>`;
-      return;
-    }
-    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
-      <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
-      <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
-    </div>`;
-    if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
-    else renderizarSegunRecomendacion(idContenedor, datos);
-    conectarBotonFijarPanel(resultadoCont);
-    return;
-  }
-
-  // 3) Formulario de Supervisión completo — se activa con la palabra "formulario"
+  // 1) Formulario de Supervisión completo — se activa con la palabra "formulario"
+  // (va primero para que no lo intercepte la regla de "cruce" cuando la
+  // consulta también menciona un estado + "por" + un campo agrupable)
   // para no confundirlo con los campos de "Datos completos" (ambos tienen
   // "Aliado", "Técnico", etc.). Ej: "formulario conforme por aliado",
   // "formulario zona", "formulario hallazgo 1 semidirecta".
@@ -716,6 +731,7 @@ function ejecutarBusquedaGrafica(texto) {
     }
 
     let fuente = state.supervisionDetalle;
+    fuente = aplicarRangoFechaGlobal(fuente, 'Fecha Ejecucion OS');
     const tipoMedidaMatch = ['semidirecta', 'indirecta', 'directa'].find(t => q.includes(t));
     if (tipoMedidaMatch) fuente = filtrarPorTipoMedidaCruzado(fuente, 'Serie Medidor', tipoMedidaMatch);
 
@@ -791,8 +807,50 @@ function ejecutarBusquedaGrafica(texto) {
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
+  // 2) "Top de fallas/errores más comunes"
+  if (/top|m[aá]s comunes?|ranking|frecuente/.test(q) && /falla|error/.test(q)) {
+    const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
+    const datos = calcularTopFallas(10, actasEnRango);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No encontré fallas registradas ${document.getElementById('fechaGlobalDesde').value || document.getElementById('fechaGlobalHasta').value ? 'en ese rango de fechas' : 'todavía'}.</div>`;
+      return;
+    }
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
+      <p class="panel-note" style="margin:0 0 10px;">💡 Ranking — siempre se ve mejor como barras que como dona.</p>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes' })}'>📌 Fijar en el Dashboard</button>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
+    else { const max = Math.max(...datos.map(d => d.valor), 1); renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max); }
+    conectarBotonFijarPanel(resultadoCont);
+    return;
+  }
 
-  // 3) Campo simple (comportamiento original: aliado, ciudad, score, etc.)
+  // 3) Cruce "<estado> por <campo>" — ej. "no conformidad por aliado", "desacuerdos por técnico"
+  const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
+  const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
+  if (estadoInfo && agrupableInfo && q.includes('por')) {
+    const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
+    const filtradas = actasEnRango.filter(a => (a[estadoInfo.campo] || '').toString().toUpperCase() === estadoInfo.valor);
+    const datos = agregarPorCategoria(agrupableInfo.campo, filtradas);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No hay actas en "${estadoInfo.valor}" para agrupar por ${escapeHtml(agrupableInfo.campo)}.</div>`;
+      return;
+    }
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
+    else renderizarSegunRecomendacion(idContenedor, datos);
+    conectarBotonFijarPanel(resultadoCont);
+    return;
+  }
+
+
+  // 4) Campo simple (comportamiento original: aliado, ciudad, score, etc.)
   const campoInfo = buscarCampoGraficable(texto);
   if (!campoInfo) {
     resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
@@ -803,16 +861,18 @@ function ejecutarBusquedaGrafica(texto) {
   }
 
   if (campoInfo.esNumerico) {
+    const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">histograma</span></h4>
       <p class="panel-note" style="margin:0 0 10px;">💡 Es un valor numérico — un histograma muestra mejor cómo se distribuye.</p>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
     </div>`;
-    renderHistograma(idContenedor);
+    renderHistograma(idContenedor, actasEnRango);
     return;
   }
 
-  const datos = agregarPorCategoria(campoInfo.campo);
+  const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
+  const datos = agregarPorCategoria(campoInfo.campo, actasEnRango);
   if (!datos.length) {
     resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>No hay datos cargados en "${escapeHtml(campoInfo.campo)}" todavía.</div>`;
     return;
@@ -1511,8 +1571,28 @@ function renderDashboard() {
  */
 function supervisionFiltrada() {
   const tipoElegido = document.getElementById('filtroSupervisionTipo').value;
-  if (!tipoElegido) return state.supervisionDetalle;
-  return filtrarPorTipoMedidaCruzado(state.supervisionDetalle, 'Serie Medidor', tipoElegido);
+  let datos = state.supervisionDetalle;
+
+  if (tipoElegido === 'semi_indirecta') {
+    const serieATipo = {};
+    state.actas.forEach(a => {
+      const serie = (a['Serie Medidor'] || '').toString().trim();
+      if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
+    });
+    datos = datos.filter(s => {
+      const tipo = serieATipo[(s['Serie Medidor'] || '').toString().trim()];
+      return tipo === 'semidirecta' || tipo === 'indirecta';
+    });
+  } else if (tipoElegido) {
+    datos = filtrarPorTipoMedidaCruzado(datos, 'Serie Medidor', tipoElegido);
+  }
+
+  const desde = document.getElementById('filtroSupervisionFechaDesde').value;
+  const hasta = document.getElementById('filtroSupervisionFechaHasta').value;
+  if (desde) datos = datos.filter(s => (s['Fecha Ejecucion OS'] || '').toString().slice(0, 10) >= desde);
+  if (hasta) datos = datos.filter(s => (s['Fecha Ejecucion OS'] || '').toString().slice(0, 10) <= hasta);
+
+  return datos;
 }
 
 /**
@@ -1726,7 +1806,7 @@ function renderAreaChart(contenedorId, puntos, sufijo) {
  * 90-100) y muestra cuántas actas caen en cada rango. Es la forma más clara
  * de ver si tus actas se concentran en scores altos o bajos.
  */
-function renderHistograma(contenedorId) {
+function renderHistograma(contenedorId, actasFuente) {
   const cont = document.getElementById(contenedorId);
   const cortes = [
     { desde: 0, hasta: 59, etiqueta: '0-59' },
@@ -1737,7 +1817,7 @@ function renderHistograma(contenedorId) {
   ];
   const conteo = cortes.map(c => ({ ...c, cantidad: 0 }));
 
-  state.actas.forEach(a => {
+  (actasFuente || state.actas).forEach(a => {
     const score = parseFloat(a['Score']);
     if (isNaN(score)) return;
     const bucket = conteo.find(c => score >= c.desde && score <= c.hasta);
@@ -2018,16 +2098,26 @@ function configurarVistas() {
  */
 function configurarMostrarOcultarGraficas() {
   const btn = document.getElementById('btnMostrarOcultarGraficas');
+  const btnTodas = document.getElementById('btnMostrarTodasDeUnaVez');
   const grid = document.getElementById('panelGridDashboard');
 
   const estanVisibles = () => localStorage.getItem('cce_graficas_visibles') === '1';
   const actualizar = () => {
     const visible = estanVisibles();
     grid.style.display = visible ? '' : 'none';
-    btn.textContent = visible ? '🙈 Ocultar gráficas' : '📊 Mostrar gráficas';
+    btnTodas.textContent = visible ? '🙈 Ocultar todas' : 'Mostrar todas';
   };
 
+  // El botón principal ya NO revela los 10+ paneles de golpe — en vez de
+  // eso, abre el asistente para que la persona diga justo qué quiere ver
+  // (incluyendo rango de fechas si aplica), y solo se renderiza eso.
   btn.addEventListener('click', () => {
+    document.getElementById('btnAsistente').click(); // abre el panel del asistente
+    renderBuscadorGraficas();
+  });
+
+  // Botón pequeño para quien de verdad quiera ver el Dashboard completo de una vez
+  btnTodas.addEventListener('click', () => {
     localStorage.setItem('cce_graficas_visibles', estanVisibles() ? '0' : '1');
     actualizar();
   });
@@ -2229,6 +2319,8 @@ function configurarFiltros() {
   document.getElementById('filtroSupervisionTipo').addEventListener('change', () => {
     renderDashboard();
   });
+  document.getElementById('filtroSupervisionFechaDesde').addEventListener('change', () => renderDashboard());
+  document.getElementById('filtroSupervisionFechaHasta').addEventListener('change', () => renderDashboard());
   document.getElementById('btnNuevaActa').addEventListener('click', () => abrirModalActa(null));
   configurarImportacionExcel();
 }
