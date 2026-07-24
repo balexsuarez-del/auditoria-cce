@@ -296,6 +296,7 @@ function configurarAsistente() {
   document.getElementById('btnAsistenteBuscarGraficar').addEventListener('click', () => {
     renderBuscadorGraficas();
   });
+  document.getElementById('btnAsistentePowerPoint').addEventListener('click', () => generarPowerPoint());
 
   document.getElementById('formPreguntaAsistente').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -435,6 +436,34 @@ const ESTADOS_RECONOCIDOS = [
 ];
 const PALETA_MULTICOLOR = ['var(--purple-500)', 'var(--orange-500)', 'var(--green-600)', 'var(--blue-600)', 'var(--red-600)', 'var(--amber-700)', 'var(--purple-900)'];
 
+// Campos del formulario completo de "Supervision" (Microsoft Forms) — se
+// activan con la palabra "formulario" para no confundirse con los campos
+// homónimos de "Datos completos" (ambos tienen Aliado, Técnico, etc.).
+const CAMPOS_SUPERVISION = [
+  { claves: ['aliado'], campo: 'Aliado' },
+  { claves: ['tecnico', 'técnico'], campo: 'Tecnico' },
+  { claves: ['conforme'], campo: 'Conforme' },
+  { claves: ['hallazgo 1'], campo: 'Tipo Hallazgo 1' },
+  { claves: ['hallazgo 2'], campo: 'Tipo Hallazgo 2' },
+  { claves: ['hallazgo 3'], campo: 'Tipo Hallazgo 3' },
+  { claves: ['no conformidad'], campo: 'No Conformidad 1' },
+  { claves: ['condicion tecnica', 'condición técnica', 'condicion técnica'], campo: 'Condicion Tecnica' },
+  { claves: ['zona'], campo: 'Zona' },
+  { claves: ['supervisor'], campo: 'Supervisor' },
+  { claves: ['tipo inspeccion', 'tipo de inspección', 'inspeccion'], campo: 'Tipo Inspeccion' },
+  { claves: ['tipo os', 'tipo de os'], campo: 'Tipo OS Programada' }
+];
+
+/** Filtra cualquier arreglo de registros por Tipo de Medida, cruzando por Serie Medidor contra las actas. */
+function filtrarPorTipoMedidaCruzado(registros, campoSerieEnRegistro, tipoMedida) {
+  const serieATipo = {};
+  state.actas.forEach(a => {
+    const serie = (a['Serie Medidor'] || '').toString().trim();
+    if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
+  });
+  return registros.filter(r => serieATipo[(r[campoSerieEnRegistro] || '').toString().trim()] === tipoMedida);
+}
+
 function buscarCampoGraficable(texto) {
   const q = texto.toLowerCase().trim();
   return CAMPOS_GRAFICABLES.find(c => c.claves.some(k => q.includes(k)));
@@ -525,6 +554,11 @@ function calcularDatosPanelPersonalizado(config) {
     const filtradas = state.actas.filter(a => (a[config.estadoCampo] || '').toString().toUpperCase() === config.estadoValor);
     return agregarPorCategoria(config.agrupableCampo, filtradas);
   }
+  if (config.tipo === 'formulario') {
+    let fuente = state.supervisionDetalle || [];
+    if (config.tipoMedida) fuente = filtrarPorTipoMedidaCruzado(fuente, 'Serie Medidor', config.tipoMedida);
+    return agregarPorCategoria(config.campo, fuente);
+  }
   return agregarPorCategoria(config.campo); // tipo === 'campo'
 }
 
@@ -576,10 +610,10 @@ function renderBuscadorGraficas() {
     <div class="asistente-resumen">
       <span class="emoji">📈</span>
       <div><strong>Busca, grafica o tabula lo que necesites</strong>
-      <span>Ej: "top fallas", "no conformidad por aliado", "tabla de ciudad", "score"…</span></div>
+      <span>Ej: "top fallas", "no conformidad por aliado", "formulario conforme por aliado", "formulario zona semidirecta"…</span></div>
     </div>
     <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 14px;">
-      <input type="text" id="inputBuscadorGraficas" placeholder="Ej: top de fallas más comunes, desacuerdos por técnico…">
+      <input type="text" id="inputBuscadorGraficas" placeholder="Ej: formulario hallazgo 1, formulario conforme indirecta…">
       <button type="submit" class="btn btn-primary btn-icon">Buscar</button>
     </form>
     <div id="resultadoBuscadorGraficas"></div>
@@ -662,6 +696,48 @@ function ejecutarBusquedaGrafica(texto) {
       <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
+    else renderizarSegunRecomendacion(idContenedor, datos);
+    conectarBotonFijarPanel(resultadoCont);
+    return;
+  }
+
+  // 3) Formulario de Supervisión completo — se activa con la palabra "formulario"
+  // para no confundirlo con los campos de "Datos completos" (ambos tienen
+  // "Aliado", "Técnico", etc.). Ej: "formulario conforme por aliado",
+  // "formulario zona", "formulario hallazgo 1 semidirecta".
+  if (q.includes('formulario')) {
+    if (!state.supervisionDetalle || !state.supervisionDetalle.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>
+        Todavía no hay datos en la pestaña "Supervision" de tu Google Sheet.</div>`;
+      return;
+    }
+
+    let fuente = state.supervisionDetalle;
+    const tipoMedidaMatch = ['semidirecta', 'indirecta', 'directa'].find(t => q.includes(t));
+    if (tipoMedidaMatch) fuente = filtrarPorTipoMedidaCruzado(fuente, 'Serie Medidor', tipoMedidaMatch);
+
+    const campoInfoSup = CAMPOS_SUPERVISION.find(c => c.claves.some(k => q.includes(k)));
+    if (!campoInfoSup) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
+        Del formulario reconozco: aliado, técnico, conforme, hallazgo 1/2/3, no conformidad,
+        condición técnica, zona, supervisor, tipo de inspección, tipo de OS. Puedes agregar
+        semidirecta/indirecta para filtrar por tipo de medida.</div>`;
+      return;
+    }
+
+    const datos = agregarPorCategoria(campoInfoSup.campo, fuente);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>
+        No hay datos en "${escapeHtml(campoInfoSup.campo)}" ${tipoMedidaMatch ? 'para ' + tipoMedidaMatch : ''}.</div>`;
+      return;
+    }
+    const tituloConFiltro = campoInfoSup.campo + (tipoMedidaMatch ? ` (${tipoMedidaMatch})` : '') + ' — formulario';
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(tituloConFiltro)} <span class="severidad-pill sev-baja">${fuente.length} respuesta(s)</span></h4>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'formulario', campo: campoInfoSup.campo, tipoMedida: tipoMedidaMatch || '', titulo: tituloConFiltro })}'>📌 Fijar en el Dashboard</button>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, campoInfoSup.campo);
     else renderizarSegunRecomendacion(idContenedor, datos);
     conectarBotonFijarPanel(resultadoCont);
     return;
@@ -1387,17 +1463,7 @@ function renderDashboard() {
 function supervisionFiltrada() {
   const tipoElegido = document.getElementById('filtroSupervisionTipo').value;
   if (!tipoElegido) return state.supervisionDetalle;
-
-  const serieATipo = {};
-  state.actas.forEach(a => {
-    const serie = (a['Serie Medidor'] || '').toString().trim();
-    if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
-  });
-
-  return state.supervisionDetalle.filter(s => {
-    const serie = (s['Serie Medidor'] || '').toString().trim();
-    return serieATipo[serie] === tipoElegido;
-  });
+  return filtrarPorTipoMedidaCruzado(state.supervisionDetalle, 'Serie Medidor', tipoElegido);
 }
 
 /**
@@ -1675,6 +1741,124 @@ function renderBarraApilada(contenedorId, segmentos) {
   cont.innerHTML = `<div class="apilada-track">${track}</div><div class="chart-leyenda">${leyenda}</div>`;
 }
 
+// ============================================================================
+// GENERAR POWERPOINT — arma un .pptx en el navegador con PptxGenJS (gratis,
+// sin servidor), con los KPIs y gráficas actuales convertidos en gráficas
+// NATIVAS de PowerPoint (editables ahí mismo, no imágenes pegadas).
+// ============================================================================
+async function generarPowerPoint() {
+  if (typeof PptxGenJS === 'undefined') {
+    mostrarToast('No se pudo cargar la librería de PowerPoint. Revisa tu conexión e intenta de nuevo.', 'error');
+    return;
+  }
+  const k = state.kpis;
+  if (!k) { mostrarToast('Espera a que carguen los datos antes de generar el PowerPoint.', 'error'); return; }
+
+  mostrarToast('Generando PowerPoint…', 'success');
+
+  const PURPLE = '501C7C', PURPLE2 = '7028AE', ORANGE = 'FF7900',
+    GREEN = '039855', RED = 'D92D20', AMBER = '92400E';
+
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'CCE', width: 13.33, height: 7.5 });
+  pptx.layout = 'CCE';
+  pptx.author = 'Asistente CCE';
+  pptx.title = 'Auditoría CCE — enerBit';
+
+  // --- Portada -------------------------------------------------------------
+  let slide = pptx.addSlide();
+  slide.background = { color: PURPLE };
+  slide.addText('Auditoría CCE', { x: 0.6, y: 2.6, w: 12, h: 1, fontSize: 44, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+  slide.addText('enerBit S.A. ESP', { x: 0.6, y: 3.5, w: 12, h: 0.5, fontSize: 20, color: 'F3E8FF', fontFace: 'Arial' });
+  slide.addText('Generado el ' + new Date().toLocaleString('es-CO'), { x: 0.6, y: 4.1, w: 12, h: 0.4, fontSize: 12, color: 'D6BCFA', fontFace: 'Arial' });
+
+  // --- KPIs (tabla) ----------------------------------------------------------
+  slide = pptx.addSlide();
+  slide.addText('Resumen ejecutivo', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 28, bold: true, color: PURPLE, fontFace: 'Arial' });
+  const filaKpi = (etiqueta, valor, color) => ([
+    { text: etiqueta, options: { bold: true, fontFace: 'Arial', fontSize: 14 } },
+    { text: String(valor), options: { fontFace: 'Arial', fontSize: 14, color, bold: true } }
+  ]);
+  slide.addTable([
+    filaKpi('Total actas', k.total, '344055'),
+    filaKpi('Conformes (Manual)', k.conformesManual, GREEN),
+    filaKpi('No conformes (Manual)', k.noConformesManual, RED),
+    filaKpi('Conformes (IA)', k.conformesIA, '444CE7'),
+    filaKpi('No conformes (IA)', k.noConformesIA, RED),
+    filaKpi('Desacuerdos T≠U', k.desacuerdos, AMBER)
+  ], { x: 0.5, y: 1.2, w: 7, h: 4, fontSize: 14, border: { type: 'solid', color: 'D0D5DD', pt: 1 }, autoPage: false });
+
+  // --- Conformidad general (dona nativa) --------------------------------------
+  slide = pptx.addSlide();
+  slide.addText('Conformidad general', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+  slide.addChart(pptx.ChartType.doughnut, [{
+    name: 'Conformidad',
+    labels: ['Conforme', 'No conforme', 'Pendiente'],
+    values: [k.conformesManual, k.noConformesManual, k.pendientesManual]
+  }], { x: 2, y: 1.2, w: 9, h: 5.5, chartColors: [GREEN, RED, AMBER], showLegend: true, legendPos: 'r', showValue: true });
+
+  // --- Conformidad por aliado (barras) -----------------------------------------
+  if (k.porAliado && k.porAliado.length) {
+    slide = pptx.addSlide();
+    slide.addText('Conformidad por aliado (% no conformidad)', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 22, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addChart(pptx.ChartType.bar, [{
+      name: '% NC',
+      labels: k.porAliado.map(a => a.aliado),
+      values: k.porAliado.map(a => +(a.pctNC * 100).toFixed(1))
+    }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [RED], showValue: true, valAxisTitle: '% no conformidad' });
+  }
+
+  // --- Top de fallas más comunes ------------------------------------------------
+  const topFallas = calcularTopFallas(8);
+  if (topFallas.length) {
+    slide = pptx.addSlide();
+    slide.addText('Top de fallas más comunes', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addChart(pptx.ChartType.bar, [{
+      name: 'Fallas',
+      labels: topFallas.map(f => f.etiqueta),
+      values: topFallas.map(f => f.valor)
+    }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [ORANGE], showValue: true });
+  }
+
+  // --- Score promedio por tipo de medida -----------------------------------------
+  if (k.porTipoMedida && k.porTipoMedida.length) {
+    slide = pptx.addSlide();
+    slide.addText('Score promedio por tipo de medida', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 24, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addChart(pptx.ChartType.bar, [{
+      name: 'Score',
+      labels: k.porTipoMedida.map(t => t.tipo),
+      values: k.porTipoMedida.map(t => +t.scoreProm.toFixed(1))
+    }], { x: 0.7, y: 1.2, w: 11.9, h: 5.5, chartColors: [PURPLE2], showValue: true, valAxisMaxVal: 100 });
+  }
+
+  // --- Desacuerdos T≠U (tabla) -----------------------------------------------
+  const desacuerdos = state.actas.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO');
+  if (desacuerdos.length) {
+    slide = pptx.addSlide();
+    slide.addText(`Desacuerdos T≠U (${desacuerdos.length})`, { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+    const filasTabla = [
+      [{ text: '#', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
+       { text: 'Aliado', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
+       { text: 'Manual', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
+       { text: 'IA', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } }]
+    ];
+    desacuerdos.slice(0, 15).forEach(a => {
+      filasTabla.push([
+        { text: String(a['#']), options: { fontSize: 11 } },
+        { text: a['Aliado'] || '', options: { fontSize: 11 } },
+        { text: a['Supervisión Manual (T)'] || '', options: { fontSize: 11, color: RED } },
+        { text: a['Supervisión IA (U)'] || '', options: { fontSize: 11, color: '444CE7' } }
+      ]);
+    });
+    slide.addTable(filasTabla, { x: 0.5, y: 1.2, w: 12, h: 5.5, fontFace: 'Arial', border: { type: 'solid', color: 'D0D5DD', pt: 1 } });
+    if (desacuerdos.length > 15) {
+      slide.addText(`…y ${desacuerdos.length - 15} más — ver el detalle completo en la app.`, { x: 0.5, y: 6.8, w: 12, h: 0.4, fontSize: 11, italic: true, color: '667085' });
+    }
+  }
+
+  await pptx.writeFile({ fileName: `Auditoria_CCE_${new Date().toISOString().slice(0, 10)}.pptx` });
+  mostrarToast('PowerPoint descargado.', 'success');
+}
 // ============================================================================
 // SELECTOR DE VISTA (Barras / Dona / Barra apilada) — recuerda la elección
 // ============================================================================
