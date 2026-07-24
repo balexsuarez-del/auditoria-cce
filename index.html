@@ -56,6 +56,10 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2 1 21h22L12 2Zm0 6.5 6.2 10.8H5.8L12 8.5ZM11 11v4h2v-4h-2Zm0 5.5v2h2v-2h-2Z" fill="currentColor"/></svg>
         Desacuerdos T≠U
       </button>
+      <button class="nav-item" data-view="supervision">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 5h6M9 11h6M9 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Supervisión
+      </button>
     </nav>
     <div class="sidebar-footer">
       <div class="sync-indicator" id="syncIndicator">
@@ -310,6 +314,52 @@
           <tbody></tbody>
         </table>
       </div>
+    </section>
+
+    <!-- Vista: Supervisión (formulario completo) -->
+    <section id="view-supervision" class="view">
+      <header class="view-header">
+        <div>
+          <h2>Supervisión Manual (formulario)</h2>
+          <p class="view-subtitle" id="supervisionViewSubtitle">–</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="btnActualizarSupervisionExcel">📤 Actualizar desde Excel</button>
+          <input type="file" id="inputSupervisionExcel" accept=".xlsx,.xls" hidden>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <input type="search" id="filtroSupervisionViewTexto" placeholder="Buscar por aliado, técnico, serie, supervisor, zona…">
+        <select id="filtroSupervisionViewAliado"><option value="">Todos los aliados</option></select>
+        <select id="filtroSupervisionViewConforme">
+          <option value="">Conforme: todos</option>
+          <option value="Conforme">Solo Conforme</option>
+          <option value="No conforme">Solo No conforme</option>
+        </select>
+        <select id="filtroSupervisionViewTipoMedida">
+          <option value="semi_indirecta" selected>Semidirecta + Indirecta</option>
+          <option value="">Todos los tipos</option>
+          <option value="semidirecta">Solo Semidirecta</option>
+          <option value="indirecta">Solo Indirecta</option>
+        </select>
+        <label class="toolbar-date-label">Desde <input type="date" id="filtroSupervisionViewDesde"></label>
+        <label class="toolbar-date-label">Hasta <input type="date" id="filtroSupervisionViewHasta"></label>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="tablaSupervisionView">
+          <thead>
+            <tr>
+              <th>ID</th><th>Fecha Ejecución</th><th>Aliado</th><th>Técnico</th><th>Tipo Medida</th>
+              <th>Serie Medidor</th><th>Numero OS</th><th>Conforme</th><th>Tipo Hallazgo 1</th>
+              <th>Zona</th><th>Supervisor</th><th>Observación General</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="panel-note">Fuente: pestaña "Supervision" de tu Google Sheet. El Tipo de Medida se cruza por Serie Medidor contra "Datos completos" — las series sin coincidencia se excluyen al filtrar por tipo. "Actualizar desde Excel" sube o actualiza registros por ID (no borra los que no vengan en el archivo).</p>
     </section>
 
   </main>

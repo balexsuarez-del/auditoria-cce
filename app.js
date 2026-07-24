@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
   configurarVistas();
   aplicarVisibilidadPaneles();
   aplicarOrdenPaneles();
+  configurarVistaSupervision();
 
   document.getElementById('btnRefrescar').addEventListener('click', () => cargarDatos(true));
 
@@ -1470,6 +1471,7 @@ function renderTodo() {
   renderFiltroAliados();
   renderTablaDatos();
   renderTablaDesacuerdos();
+  renderTablaSupervisionView();
 }
 
 // --- Dashboard --------------------------------------------------------------
@@ -2715,6 +2717,167 @@ function renderTablaDesacuerdos() {
   });
   if (!desacuerdos.length) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--ink-500);padding:20px;">No hay desacuerdos activos 🎉</td></tr>';
+  }
+}
+
+// ============================================================================
+// VISTA: SUPERVISIÓN (formulario completo) — tabla dedicada con filtros
+// ============================================================================
+function configurarVistaSupervision() {
+  ['filtroSupervisionViewTexto', 'filtroSupervisionViewAliado', 'filtroSupervisionViewConforme',
+    'filtroSupervisionViewTipoMedida', 'filtroSupervisionViewDesde', 'filtroSupervisionViewHasta'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener(el.tagName === 'INPUT' && el.type === 'search' ? 'input' : 'change', () => renderTablaSupervisionView());
+  });
+
+  document.getElementById('btnActualizarSupervisionExcel').addEventListener('click', () => {
+    document.getElementById('inputSupervisionExcel').click();
+  });
+  document.getElementById('inputSupervisionExcel').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) actualizarSupervisionDesdeExcel(file);
+  });
+}
+
+function supervisionFiltradaCompleta() {
+  const texto = document.getElementById('filtroSupervisionViewTexto').value.trim().toLowerCase();
+  const aliado = document.getElementById('filtroSupervisionViewAliado').value;
+  const conforme = document.getElementById('filtroSupervisionViewConforme').value;
+  const tipoMedida = document.getElementById('filtroSupervisionViewTipoMedida').value;
+  const desde = document.getElementById('filtroSupervisionViewDesde').value;
+  const hasta = document.getElementById('filtroSupervisionViewHasta').value;
+
+  const serieATipo = {};
+  state.actas.forEach(a => {
+    const serie = (a['Serie Medidor'] || '').toString().trim();
+    if (serie) serieATipo[serie] = (a['Tipo Medida'] || '').toString().trim().toLowerCase();
+  });
+
+  return (state.supervisionDetalle || []).filter(s => {
+    if (aliado && s['Aliado'] !== aliado) return false;
+    if (conforme && (s['Conforme'] || '') !== conforme) return false;
+
+    const tipo = serieATipo[(s['Serie Medidor'] || '').toString().trim()];
+    if (tipoMedida === 'semi_indirecta' && tipo !== 'semidirecta' && tipo !== 'indirecta') return false;
+    if (tipoMedida && tipoMedida !== 'semi_indirecta' && tipo !== tipoMedida) return false;
+
+    const fecha = (s['Fecha Ejecucion OS'] || '').toString().slice(0, 10);
+    if (desde && fecha < desde) return false;
+    if (hasta && fecha > hasta) return false;
+
+    if (texto) {
+      const haystack = [s['Aliado'], s['Tecnico'], s['Serie Medidor'], s['Zona'], s['Supervisor'], s['Numero OS']]
+        .join(' ').toLowerCase();
+      if (!haystack.includes(texto)) return false;
+    }
+    return true;
+  }).map(s => ({ ...s, _tipoMedida: serieATipo[(s['Serie Medidor'] || '').toString().trim()] || '' }));
+}
+
+function renderTablaSupervisionView() {
+  // Refresca el desplegable de aliados con los valores reales presentes
+  const selectAliado = document.getElementById('filtroSupervisionViewAliado');
+  if (selectAliado.options.length <= 1) {
+    const aliados = [...new Set((state.supervisionDetalle || []).map(s => s['Aliado']).filter(Boolean))].sort();
+    const actual = selectAliado.value;
+    selectAliado.innerHTML = '<option value="">Todos los aliados</option>' +
+      aliados.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
+    selectAliado.value = actual;
+  }
+
+  const filtradas = supervisionFiltradaCompleta();
+  document.getElementById('supervisionViewSubtitle').textContent =
+    filtradas.length + ' de ' + (state.supervisionDetalle || []).length + ' respuestas mostradas';
+
+  const tbody = document.querySelector('#tablaSupervisionView tbody');
+  tbody.innerHTML = '';
+  filtradas.slice(0, 500).forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(s['ID'])}</td>
+      <td>${escapeHtml((s['Fecha Ejecucion OS'] || '').toString().slice(0, 10))}</td>
+      <td>${escapeHtml(s['Aliado'])}</td>
+      <td>${escapeHtml(s['Tecnico'])}</td>
+      <td>${escapeHtml(s['_tipoMedida'])}</td>
+      <td>${escapeHtml(s['Serie Medidor'])}</td>
+      <td>${escapeHtml(s['Numero OS'])}</td>
+      <td>${celdaHtml('Conforme', s['Conforme'] === 'Conforme' ? 'CONFORME' : (s['Conforme'] === 'No conforme' ? 'NO CONFORMIDAD' : s['Conforme']))}</td>
+      <td>${escapeHtml(s['Tipo Hallazgo 1'])}</td>
+      <td>${escapeHtml(s['Zona'])}</td>
+      <td>${escapeHtml(s['Supervisor'])}</td>
+      <td>${escapeHtml(s['Observacion General'])}</td>`;
+    tbody.appendChild(tr);
+  });
+  if (!filtradas.length) {
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--ink-500);padding:20px;">Sin resultados con estos filtros.</td></tr>';
+  } else if (filtradas.length > 500) {
+    tbody.insertAdjacentHTML('beforeend', `<tr><td colspan="12" style="text-align:center;color:var(--ink-500);padding:10px;">…y ${filtradas.length - 500} más — afina los filtros para acotar.</td></tr>`);
+  }
+}
+
+/** Lee un Excel del formulario de Supervisión y lo envía al backend para actualizar (upsert por ID). */
+async function actualizarSupervisionDesdeExcel(file) {
+  const btn = document.getElementById('btnActualizarSupervisionExcel');
+  btn.disabled = true;
+  btn.textContent = 'Leyendo archivo…';
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    const nombreHoja = workbook.SheetNames.find(n => {
+      const filas = XLSX.utils.sheet_to_json(workbook.Sheets[n], { header: 1, raw: true, defval: '' });
+      const encabezados = (filas[0] || []).map(h => (h || '').toString().toLowerCase());
+      return encabezados.some(h => h.includes('conforme')) && encabezados.some(h => h.includes('medidor'));
+    }) || workbook.SheetNames[0];
+
+    const filas = XLSX.utils.sheet_to_json(workbook.Sheets[nombreHoja], { header: 1, raw: true, defval: '' });
+    const encabezadosOriginales = (filas[0] || []).map(h => (h || '').toString().trim());
+    const idx = (patron) => encabezadosOriginales.findIndex(h => h.toLowerCase().includes(patron));
+
+    const mapaColumnas = {
+      'ID': idx('id'), 'Fecha Supervision': idx('fecha de supervis') !== -1 ? idx('fecha de supervis') : idx('fecha supervision'),
+      'Fecha Ejecucion OS': idx('fecha de ejecuci') !== -1 ? idx('fecha de ejecuci') : idx('fecha ejecucion'),
+      'Supervisor': idx('supervisor'), 'Zona': idx('zona'),
+      'Serie Medidor': idx('medidor'), 'Tipo Inspeccion': idx('inspecci'),
+      'Numero OS': idx('os') !== -1 ? idx('os') : idx('numero de os'),
+      'Aliado': idx('aliado'), 'Tecnico': idx('cnico'),
+      'Conforme': idx('conforme'), 'Tipo Hallazgo 1': idx('tipo de hallazgo'),
+      'Condicion Tecnica': idx('condici'), 'Observacion General': idx('observaci')
+    };
+
+    const registros = [];
+    for (let i = 1; i < filas.length; i++) {
+      const fila = filas[i];
+      const id = mapaColumnas['ID'] !== -1 ? fila[mapaColumnas['ID']] : null;
+      if (id === null || id === undefined || id === '') continue;
+      const obj = {};
+      Object.keys(mapaColumnas).forEach(campo => {
+        const col = mapaColumnas[campo];
+        if (col === -1) return;
+        let valor = fila[col];
+        if (valor instanceof Date) valor = valor.toISOString().slice(0, 10);
+        obj[campo] = valor === undefined ? '' : valor;
+      });
+      registros.push(obj);
+    }
+
+    if (!registros.length) {
+      mostrarToast('No encontré filas con ID en ese archivo — revisa que sea el formulario de Supervisión.', 'error');
+      return;
+    }
+
+    btn.textContent = 'Actualizando…';
+    const resp = await postAccion('bulkImportSupervision', { registros });
+    await cargarDatos(false);
+    renderTablaSupervisionView();
+    mostrarToast(resp.mensaje || `${registros.length} registros de Supervisión actualizados.`, 'success');
+  } catch (err) {
+    mostrarToast('Error al actualizar Supervisión: ' + err.message, 'error');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 Actualizar desde Excel';
   }
 }
 
