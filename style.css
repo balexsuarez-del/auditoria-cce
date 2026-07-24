@@ -77,17 +77,17 @@ body {
   margin-bottom: 14px;
 }
 
-.brand-mark {
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--orange-500), #FF9838);
-  color: white;
-  display: flex; align-items: center; justify-content: center;
+.brand-mark-wordmark {
   font-weight: 800;
-  font-size: 14px;
+  font-size: 20px;
+  letter-spacing: -0.3px;
   flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(255,121,0,0.35);
+  white-space: nowrap;
 }
+.brand-mark-wordmark-sidebar { font-size: 19px; }
+.bm-ener { color: var(--orange-500); }
+.bm-bit { color: var(--purple-700); }
+.bm-bit-white { color: #FFFFFF; }
 
 .brand-name {
   font-weight: 700;

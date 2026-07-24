@@ -1896,9 +1896,30 @@ async function generarPowerPoint() {
   pptx.author = 'Asistente CCE';
   pptx.title = 'Auditoría CCE — enerBit';
 
+  /**
+   * Dibuja el wordmark real de enerBit ("ener" en naranja + "Bit" en morado,
+   * o "Bit" en blanco cuando el fondo de la diapositiva es oscuro) usando
+   * texto nativo de PowerPoint — sin depender de ningún archivo de imagen.
+   */
+  const dibujarLogoEnerbit = (slide, x, y, alturaTexto, sobreFondoOscuro) => {
+    slide.addText([
+      { text: 'ener', options: { color: ORANGE } },
+      { text: 'Bit', options: { color: sobreFondoOscuro ? 'FFFFFF' : PURPLE } }
+    ], {
+      x, y, w: alturaTexto * 4.2, h: alturaTexto * 1.3,
+      fontSize: alturaTexto * 34, bold: true, fontFace: 'Arial', align: 'left', valign: 'middle'
+    });
+  };
+
+  /** Agrega el wordmark chiquito como marca de agua discreta en una esquina. */
+  const marcaDeAgua = (slide) => {
+    dibujarLogoEnerbit(slide, 11.55, 7.05, 0.22, false);
+  };
+
   // --- Portada -------------------------------------------------------------
   let slide = pptx.addSlide();
   slide.background = { color: PURPLE };
+  dibujarLogoEnerbit(slide, 0.6, 0.5, 0.5, true);
   slide.addText('Auditoría CCE', { x: 0.6, y: 2.6, w: 12, h: 1, fontSize: 44, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
   slide.addText('enerBit S.A. ESP', { x: 0.6, y: 3.5, w: 12, h: 0.5, fontSize: 20, color: 'F3E8FF', fontFace: 'Arial' });
   slide.addText('Generado el ' + new Date().toLocaleString('es-CO'), { x: 0.6, y: 4.1, w: 12, h: 0.4, fontSize: 12, color: 'D6BCFA', fontFace: 'Arial' });
@@ -1918,6 +1939,7 @@ async function generarPowerPoint() {
     filaKpi('No conformes (IA)', k.noConformesIA, RED),
     filaKpi('Desacuerdos T≠U', k.desacuerdos, AMBER)
   ], { x: 0.5, y: 1.2, w: 7, h: 4, fontSize: 14, border: { type: 'solid', color: 'D0D5DD', pt: 1 }, autoPage: false });
+  marcaDeAgua(slide);
 
   // --- Conformidad general (dona nativa) --------------------------------------
   slide = pptx.addSlide();
@@ -1927,6 +1949,7 @@ async function generarPowerPoint() {
     labels: ['Conforme', 'No conforme', 'Pendiente'],
     values: [k.conformesManual, k.noConformesManual, k.pendientesManual]
   }], { x: 2, y: 1.2, w: 9, h: 5.5, chartColors: [GREEN, RED, AMBER], showLegend: true, legendPos: 'r', showValue: true });
+  marcaDeAgua(slide);
 
   // --- Conformidad por aliado (barras) -----------------------------------------
   if (k.porAliado && k.porAliado.length) {
@@ -1937,6 +1960,7 @@ async function generarPowerPoint() {
       labels: k.porAliado.map(a => a.aliado),
       values: k.porAliado.map(a => +(a.pctNC * 100).toFixed(1))
     }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [RED], showValue: true, valAxisTitle: '% no conformidad' });
+    marcaDeAgua(slide);
   }
 
   // --- Top de fallas más comunes ------------------------------------------------
@@ -1949,6 +1973,7 @@ async function generarPowerPoint() {
       labels: topFallas.map(f => f.etiqueta),
       values: topFallas.map(f => f.valor)
     }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [ORANGE], showValue: true });
+    marcaDeAgua(slide);
   }
 
   // --- Score promedio por tipo de medida -----------------------------------------
@@ -1960,6 +1985,7 @@ async function generarPowerPoint() {
       labels: k.porTipoMedida.map(t => t.tipo),
       values: k.porTipoMedida.map(t => +t.scoreProm.toFixed(1))
     }], { x: 0.7, y: 1.2, w: 11.9, h: 5.5, chartColors: [PURPLE2], showValue: true, valAxisMaxVal: 100 });
+    marcaDeAgua(slide);
   }
 
   // --- Desacuerdos T≠U (tabla) -----------------------------------------------
@@ -1985,7 +2011,15 @@ async function generarPowerPoint() {
     if (desacuerdos.length > 15) {
       slide.addText(`…y ${desacuerdos.length - 15} más — ver el detalle completo en la app.`, { x: 0.5, y: 6.8, w: 12, h: 0.4, fontSize: 11, italic: true, color: '667085' });
     }
+    marcaDeAgua(slide);
   }
+
+  // --- Cierre ------------------------------------------------------------------
+  slide = pptx.addSlide();
+  slide.background = { color: PURPLE };
+  dibujarLogoEnerbit(slide, 5.2, 2.7, 0.7, true);
+  slide.addText('Gracias', { x: 0.6, y: 4.1, w: 12.13, h: 0.8, fontSize: 32, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center' });
+  slide.addText('Auditoría CCE · enerBit S.A. ESP', { x: 0.6, y: 4.85, w: 12.13, h: 0.4, fontSize: 14, color: 'D6BCFA', fontFace: 'Arial', align: 'center' });
 
   await pptx.writeFile({ fileName: `Auditoria_CCE_${new Date().toISOString().slice(0, 10)}.pptx` });
   mostrarToast('PowerPoint descargado.', 'success');
