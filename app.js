@@ -1168,16 +1168,45 @@ function renderAsistente() {
     return;
   }
 
-  const emoji = criticos > 0 ? '🔎' : '🙂';
-  let html = `<div class="asistente-resumen">
-    <span class="emoji">${emoji}</span>
-    <div><strong>${totalItems} hallazgo(s) en ${grupos.length} categoría(s)</strong>
-    <span>${criticos ? criticos + ' de atención prioritaria' : 'nada urgente, solo revisiones pendientes'}</span></div>
+  // Ordenar por severidad (alta primero) y tamaño, para que "Orientar/Decidir" señalen lo correcto
+  const gruposOrdenados = grupos.slice().sort((a, b) => {
+    const peso = { alta: 3, media: 2, baja: 1 };
+    return (peso[b.severidad] - peso[a.severidad]) || (b.items.length - a.items.length);
+  });
+  const prioridad = gruposOrdenados[0];
+
+  // --- Franja OODA: Observar / Orientar / Decidir / Actuar --------------------
+  let html = `<div class="franja-ooda">
+    <div class="ooda-paso">
+      <span class="ooda-etiqueta">👁 Observar</span>
+      <span class="ooda-valor">${totalItems} hallazgo(s)</span>
+      <span class="ooda-detalle">en ${grupos.length} categoría(s)</span>
+    </div>
+    <div class="ooda-paso">
+      <span class="ooda-etiqueta">🧭 Orientar</span>
+      <span class="ooda-valor">${criticos} crítico(s)</span>
+      <span class="ooda-detalle">${criticos ? 'requieren atención pronto' : 'nada urgente'}</span>
+    </div>
+    <div class="ooda-paso ooda-decidir">
+      <span class="ooda-etiqueta">🎯 Decidir</span>
+      <span class="ooda-valor">${escapeHtml(prioridad.titulo)}</span>
+      <span class="ooda-detalle">${prioridad.items.length} caso(s) — empieza por aquí</span>
+    </div>
+    <div class="ooda-paso">
+      <span class="ooda-etiqueta">⚡ Actuar</span>
+      <span class="ooda-valor">Abre una categoría</span>
+      <span class="ooda-detalle">y usa los botones de cada hallazgo</span>
+    </div>
   </div>`;
 
-  grupos.forEach(g => {
+  gruposOrdenados.forEach((g, iGrupo) => {
+    const abierta = iGrupo === 0; // solo la categoría prioritaria empieza expandida
     html += `<div class="hallazgo-grupo">
-      <h4>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></h4>`;
+      <h4 class="hallazgo-grupo-toggle" data-toggle-grupo="${iGrupo}">
+        <span>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></span>
+        <span class="chevron-grupo">${abierta ? '▾' : '▸'}</span>
+      </h4>
+      <div class="hallazgo-items-lista" data-lista-grupo="${iGrupo}" style="${abierta ? '' : 'display:none;'}">`;
     g.items.slice(0, 25).forEach((it, idx) => {
       const puedeEliminar = it.idsEliminables && it.idsEliminables.length;
       const tieneNota = it.notaAliado;
@@ -1192,10 +1221,21 @@ function renderAsistente() {
       </div>`;
     });
     if (g.items.length > 25) html += `<p class="panel-note">…y ${g.items.length - 25} más.</p>`;
-    html += `</div>`;
+    html += `</div></div>`;
   });
 
   cont.innerHTML = html;
+
+  cont.querySelectorAll('.hallazgo-grupo-toggle').forEach(h4 => {
+    h4.addEventListener('click', () => {
+      const idx = h4.dataset.toggleGrupo;
+      const lista = cont.querySelector(`[data-lista-grupo="${idx}"]`);
+      const chevron = h4.querySelector('.chevron-grupo');
+      const abrir = lista.style.display === 'none';
+      lista.style.display = abrir ? '' : 'none';
+      chevron.textContent = abrir ? '▾' : '▸';
+    });
+  });
 
   cont.querySelectorAll('.hallazgo-item').forEach(el => {
     el.addEventListener('click', (e) => {
