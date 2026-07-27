@@ -1918,12 +1918,13 @@ function renderBarraApilada(contenedorId, segmentos) {
 // ============================================================================
 const SECCIONES_PPT = [
   { id: 'hallazgosClave', nombre: '📌 Hallazgos clave (texto)' },
-  { id: 'resumen', nombre: 'Resumen ejecutivo (KPIs)' },
+  { id: 'resumen', nombre: 'Resumen ejecutivo (tarjetas KPI)' },
   { id: 'conformidadGeneral', nombre: 'Conformidad general' },
   { id: 'porAliado', nombre: 'Conformidad por aliado' },
   { id: 'topFallas', nombre: 'Top de fallas más comunes' },
   { id: 'scorePorTipo', nombre: 'Score por tipo de medida' },
-  { id: 'desacuerdos', nombre: 'Desacuerdos T≠U' }
+  { id: 'desacuerdos', nombre: 'Desacuerdos T≠U' },
+  { id: 'conclusiones', nombre: '🧩 Conclusiones y recomendaciones' }
 ];
 
 function renderOpcionesPowerPoint() {
@@ -1996,6 +1997,46 @@ function calcularHallazgosClave(actasFuente) {
   return frases.slice(0, 5);
 }
 
+/**
+ * Genera automáticamente (basado en reglas, no en IA generativa) el
+ * contenido de la diapositiva de Conclusiones: riesgos identificados,
+ * oportunidades de mejora, y recomendaciones concretas — a partir del
+ * mismo diagnóstico que ya usa el asistente.
+ */
+function calcularConclusiones(actas, k, topFallas) {
+  const riesgos = [], oportunidades = [], recomendaciones = [];
+
+  const pctNCGeneral = k.total ? (k.noConformesManual / k.total) : 0;
+  if (pctNCGeneral > 0) {
+    riesgos.push(`${(pctNCGeneral * 100).toFixed(0)}% de las actas del período están en No Conformidad manual.`);
+  }
+  const peorAliado = k.porAliado && k.porAliado[0];
+  if (peorAliado && peorAliado.pctNC > 0) {
+    riesgos.push(`${peorAliado.aliado} concentra el mayor porcentaje de no conformidad (${(peorAliado.pctNC * 100).toFixed(0)}%).`);
+  }
+  if (k.desacuerdos > 0) {
+    riesgos.push(`${k.desacuerdos} acta(s) con desacuerdo entre supervisión Manual e IA, sin resolver.`);
+  }
+  if (!riesgos.length) riesgos.push('No se identificaron riesgos mayores en el período analizado.');
+
+  if (topFallas && topFallas.length) {
+    oportunidades.push(`Corregir "${topFallas[0].etiqueta}" resolvería el hallazgo más repetido (${topFallas[0].valor} caso(s)).`);
+  }
+  const tipoMasBajo = k.porTipoMedida && k.porTipoMedida.slice().sort((a, b) => a.scoreProm - b.scoreProm)[0];
+  const tipoMasAlto = k.porTipoMedida && k.porTipoMedida.slice().sort((a, b) => b.scoreProm - a.scoreProm)[0];
+  if (tipoMasBajo && tipoMasAlto && tipoMasBajo.tipo !== tipoMasAlto.tipo) {
+    oportunidades.push(`Estandarizar el proceso de "${tipoMasBajo.tipo}" al nivel de "${tipoMasAlto.tipo}" (${tipoMasBajo.scoreProm.toFixed(0)} vs ${tipoMasAlto.scoreProm.toFixed(0)} de score promedio).`);
+  }
+  if (!oportunidades.length) oportunidades.push('El proceso se mantiene estable — mantener el estándar actual.');
+
+  if (peorAliado) recomendaciones.push(`Reforzar la capacitación de ${peorAliado.aliado} en los criterios de la reglas CCE con más fallas.`);
+  if (topFallas && topFallas.length) recomendaciones.push(`Incluir "${topFallas[0].etiqueta}" en el checklist de autorevisión antes de radicar el acta.`);
+  if (k.desacuerdos > 0) recomendaciones.push('Priorizar la resolución de los desacuerdos Manual vs IA pendientes esta semana.');
+  if (!recomendaciones.length) recomendaciones.push('Continuar el monitoreo periódico — no se requieren acciones correctivas urgentes.');
+
+  return { riesgos: riesgos.slice(0, 3), oportunidades: oportunidades.slice(0, 3), recomendaciones: recomendaciones.slice(0, 3) };
+}
+
 // ============================================================================
 // GENERAR POWERPOINT — arma un .pptx en el navegador con PptxGenJS (gratis,
 // sin servidor), con los KPIs y gráficas actuales convertidos en gráficas
@@ -2027,8 +2068,11 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
   }
   const k = calcularKpisLocal(actas);
 
+  // --- Paleta: fondo claro + acentos azul/verde (estilo BI ejecutivo), marca
+  // (morado/naranja de enerBit) reservada para logo, encabezados y detalles.
   const PURPLE = '501C7C', PURPLE2 = '7028AE', ORANGE = 'FF7900',
-    GREEN = '039855', RED = 'D92D20', AMBER = '92400E', GRIS_TEXTO = '667085';
+    BLUE = '2E90FA', GREEN = '12B76A', RED = 'D92D20', AMBER = 'F79009',
+    GRIS_TEXTO = '667085', GRIS_CLARO = 'F8F9FC', GRIS_BORDE = 'E4E7EC', TINTA = '1D2939';
 
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'CCE', width: 13.33, height: 7.5 });
@@ -2046,9 +2090,13 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
     });
   };
 
-  // Pie de página minimalista y consistente: logo chico + número de diapositiva.
-  // Se numera aparte (no con el contador nativo de pptx) para tener control total.
+  // Fondo claro estándar + pie de página minimalista (logo chico + número).
   let numeroSlide = 0;
+  const nuevaSlideClara = () => {
+    const s = pptx.addSlide();
+    s.background = { color: 'FFFFFF' };
+    return s;
+  };
   const pieDePagina = (slide) => {
     numeroSlide++;
     dibujarLogoEnerbit(slide, 0.4, 7.08, 0.16, false);
@@ -2056,59 +2104,71 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
   };
 
   const tituloSlide = (slide, texto) => {
-    slide.addText(texto, { x: 0.6, y: 0.35, w: 12.1, h: 0.55, fontSize: 24, bold: true, color: PURPLE, fontFace: 'Arial' });
-    slide.addShape(pptx.ShapeType.line, { x: 0.6, y: 0.92, w: 12.1, h: 0, line: { color: 'E4E7EC', width: 1 } });
+    slide.addShape(pptx.ShapeType.roundRect, { x: 0.6, y: 0.35, w: 0.09, h: 0.5, rectRadius: 0.03, fill: { color: PURPLE }, line: { type: 'none' } });
+    slide.addText(texto, { x: 0.82, y: 0.32, w: 11.9, h: 0.55, fontSize: 24, bold: true, color: TINTA, fontFace: 'Arial' });
+    slide.addShape(pptx.ShapeType.line, { x: 0.6, y: 0.98, w: 12.1, h: 0, line: { color: GRIS_BORDE, width: 1 } });
+  };
+
+  /** Tarjeta KPI: ícono + número grande + etiqueta, con sombra suave y borde de color según estado. */
+  const dibujarTarjetaKPI = (slide, x, y, w, h, opts) => {
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x, y, w, h, rectRadius: 0.1, fill: { color: 'FFFFFF' }, line: { color: GRIS_BORDE, width: 1 },
+      shadow: { type: 'outer', color: '344055', opacity: 0.18, blur: 7, offset: 2, angle: 90 }
+    });
+    slide.addShape(pptx.ShapeType.roundRect, { x, y, w: 0.07, h, rectRadius: 0.035, fill: { color: opts.color }, line: { type: 'none' } });
+    slide.addText(opts.icono, { x: x + 0.18, y: y + 0.14, w: 0.6, h: 0.4, fontSize: 17, fontFace: 'Arial' });
+    slide.addText(String(opts.valor), { x: x + 0.15, y: y + 0.5, w: w - 0.3, h: h - 0.85, fontSize: 30, bold: true, color: opts.color, fontFace: 'Arial', valign: 'middle' });
+    slide.addText(opts.etiqueta, { x: x + 0.15, y: y + h - 0.38, w: w - 0.3, h: 0.32, fontSize: 10, color: GRIS_TEXTO, fontFace: 'Arial' });
   };
 
   const rangoTexto = (fechaDesde || fechaHasta)
     ? `Período: ${fechaDesde || '…'} a ${fechaHasta || '…'}` : 'Todo el período disponible';
 
-  // --- Portada (siempre) -----------------------------------------------------
-  let slide = pptx.addSlide();
-  slide.background = { color: PURPLE };
-  dibujarLogoEnerbit(slide, 0.6, 0.5, 0.5, true);
-  slide.addText('Auditoría CCE', { x: 0.6, y: 2.7, w: 12.13, h: 1, fontSize: 40, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
-  slide.addText('enerBit S.A. ESP', { x: 0.6, y: 3.55, w: 12.13, h: 0.5, fontSize: 18, color: 'F3E8FF', fontFace: 'Arial' });
-  slide.addText(rangoTexto + '  ·  Generado el ' + new Date().toLocaleDateString('es-CO'), { x: 0.6, y: 4.05, w: 12.13, h: 0.4, fontSize: 11, color: 'D6BCFA', fontFace: 'Arial' });
+  // --- 1) Portada (siempre) — fondo claro con banda de acento de marca -----------
+  let slide = nuevaSlideClara();
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 2.1, fill: { color: PURPLE }, line: { type: 'none' } });
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 2.1, w: 13.33, h: 0.08, fill: { color: ORANGE }, line: { type: 'none' } });
+  dibujarLogoEnerbit(slide, 0.6, 0.62, 0.55, true);
+  slide.addText('Auditoría CCE', { x: 0.6, y: 2.9, w: 12.13, h: 1, fontSize: 40, bold: true, color: TINTA, fontFace: 'Arial' });
+  slide.addText('Auditoría de calidad — Programa CCE · enerBit S.A. ESP', { x: 0.6, y: 3.7, w: 12.13, h: 0.5, fontSize: 16, color: GRIS_TEXTO, fontFace: 'Arial' });
+  slide.addText(rangoTexto + '  ·  Generado el ' + new Date().toLocaleDateString('es-CO'), { x: 0.6, y: 4.2, w: 12.13, h: 0.4, fontSize: 11, color: GRIS_TEXTO, fontFace: 'Arial' });
 
-  // --- Hallazgos clave (texto) -------------------------------------------------
+  // --- 2) Hallazgos clave (texto) -------------------------------------------------
   if (secciones.hallazgosClave) {
     const frases = calcularHallazgosClave(actas);
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Hallazgos clave');
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '📌 Hallazgos clave');
     if (frases.length) {
-      slide.addText(frases.map(f => ({ text: f, options: { bullet: { code: '2022' }, breakLine: true, paraSpaceAfter: 16 } })), {
-        x: 0.7, y: 1.25, w: 11.9, h: 5.2, fontSize: 16, color: '344055', fontFace: 'Arial', valign: 'top'
+      slide.addText(frases.map(f => ({ text: f, options: { bullet: { code: '25B8', color: BLUE }, breakLine: true, paraSpaceAfter: 16 } })), {
+        x: 0.7, y: 1.25, w: 11.9, h: 5.2, fontSize: 16, color: TINTA, fontFace: 'Arial', valign: 'top'
       });
     } else {
-      slide.addText('Sin hallazgos críticos que destacar en este período. 🎉', { x: 0.7, y: 3, w: 11.9, h: 1, fontSize: 16, color: '344055', fontFace: 'Arial' });
+      slide.addText('Sin hallazgos críticos que destacar en este período. 🎉', { x: 0.7, y: 3, w: 11.9, h: 1, fontSize: 16, color: TINTA, fontFace: 'Arial' });
     }
     pieDePagina(slide);
   }
 
-  // --- KPIs (tabla) ----------------------------------------------------------
+  // --- 3) Resumen ejecutivo — tarjetas KPI con ícono y color por estado -----------
   if (secciones.resumen) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Resumen ejecutivo');
-    const filaKpi = (etiqueta, valor, color) => ([
-      { text: etiqueta, options: { bold: true, fontFace: 'Arial', fontSize: 13 } },
-      { text: String(valor), options: { fontFace: 'Arial', fontSize: 13, color, bold: true } }
-    ]);
-    slide.addTable([
-      filaKpi('Total actas', k.total, '344055'),
-      filaKpi('Conformes (Manual)', k.conformesManual, GREEN),
-      filaKpi('No conformes (Manual)', k.noConformesManual, RED),
-      filaKpi('Conformes (IA)', k.conformesIA, '444CE7'),
-      filaKpi('No conformes (IA)', k.noConformesIA, RED),
-      filaKpi('Desacuerdos T≠U', k.desacuerdos, AMBER)
-    ], { x: 0.7, y: 1.25, w: 6.5, h: 4, fontSize: 13, border: { type: 'solid', color: 'E4E7EC', pt: 1 }, autoPage: false });
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '📋 Resumen ejecutivo');
+    const cardW = 2.226, cardH = 1.9, gap = 0.25, x0 = 0.6, y0 = 1.6;
+    const tarjetas = [
+      { icono: '📊', valor: k.total, etiqueta: 'Total actas', color: PURPLE2 },
+      { icono: '✅', valor: k.conformesManual, etiqueta: 'Conformes (Manual)', color: GREEN },
+      { icono: '⚠️', valor: k.noConformesManual, etiqueta: 'No conformes (Manual)', color: RED },
+      { icono: '🤖', valor: k.conformesIA, etiqueta: 'Conformes (IA)', color: BLUE },
+      { icono: '⚖️', valor: k.desacuerdos, etiqueta: 'Desacuerdos Manual≠IA', color: AMBER }
+    ];
+    tarjetas.forEach((t, i) => dibujarTarjetaKPI(slide, x0 + i * (cardW + gap), y0, cardW, cardH, t));
+    slide.addText('Los indicadores reflejan el período seleccionado en esta presentación.', { x: 0.6, y: y0 + cardH + 0.35, w: 12.1, h: 0.4, fontSize: 11, italic: true, color: GRIS_TEXTO, fontFace: 'Arial' });
     pieDePagina(slide);
   }
 
-  // --- Conformidad general (dona nativa) --------------------------------------
+  // --- 4) Conformidad general (dona nativa) --------------------------------------
   if (secciones.conformidadGeneral) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Conformidad general');
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '🟢 Conformidad general');
     slide.addChart(pptx.ChartType.doughnut, [{
       name: 'Conformidad',
       labels: ['Conforme', 'No conforme', 'Pendiente'],
@@ -2117,23 +2177,30 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
     pieDePagina(slide);
   }
 
-  // --- Conformidad por aliado (barras) -----------------------------------------
+  // --- 5) Conformidad por aliado (ranking horizontal + mejor/peor) ---------------
   if (secciones.porAliado && k.porAliado && k.porAliado.length) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Conformidad por aliado (% no conformidad)');
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '🏗️ Conformidad por aliado (% no conformidad)');
+    const ordenAsc = k.porAliado.slice().sort((a, b) => a.pctNC - b.pctNC); // mejor primero para el chart de abajo a arriba
     slide.addChart(pptx.ChartType.bar, [{
       name: '% NC',
-      labels: k.porAliado.map(a => a.aliado),
-      values: k.porAliado.map(a => +(a.pctNC * 100).toFixed(1))
-    }], { x: 0.7, y: 1.25, w: 11.9, h: 5.3, barDir: 'bar', chartColors: [RED], showValue: true, dataLabelFontSize: 10 });
+      labels: ordenAsc.map(a => a.aliado),
+      values: ordenAsc.map(a => +(a.pctNC * 100).toFixed(1))
+    }], { x: 0.7, y: 1.55, w: 11.9, h: 5.0, barDir: 'bar', chartColors: [BLUE], showValue: true, dataLabelFontSize: 10 });
+    const mejor = ordenAsc[0], peor = ordenAsc[ordenAsc.length - 1];
+    slide.addText([
+      { text: `🏆 Mejor: ${mejor.aliado} (${(mejor.pctNC * 100).toFixed(0)}% NC)`, options: { color: GREEN, bold: true } },
+      { text: '     ', options: {} },
+      { text: `⚠️ Atención: ${peor.aliado} (${(peor.pctNC * 100).toFixed(0)}% NC)`, options: { color: RED, bold: true } }
+    ], { x: 0.7, y: 1.1, w: 11.9, h: 0.35, fontSize: 12, fontFace: 'Arial' });
     pieDePagina(slide);
   }
 
-  // --- Top de fallas más comunes ------------------------------------------------
+  // --- 6) Top de fallas más comunes ------------------------------------------------
   const topFallas = calcularTopFallas(8, actas);
   if (secciones.topFallas && topFallas.length) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Top de fallas más comunes');
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '🔎 Top de fallas más comunes');
     slide.addChart(pptx.ChartType.bar, [{
       name: 'Fallas',
       labels: topFallas.map(f => f.etiqueta),
@@ -2142,50 +2209,80 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
     pieDePagina(slide);
   }
 
-  // --- Score promedio por tipo de medida -----------------------------------------
+  // --- 7) Score por tipo de medida — medidores circulares tipo "gauge" -----------
   if (secciones.scorePorTipo && k.porTipoMedida && k.porTipoMedida.length) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, 'Score promedio por tipo de medida');
-    slide.addChart(pptx.ChartType.bar, [{
-      name: 'Score',
-      labels: k.porTipoMedida.map(t => t.tipo),
-      values: k.porTipoMedida.map(t => +t.scoreProm.toFixed(1))
-    }], { x: 0.9, y: 1.3, w: 11.5, h: 5.2, chartColors: [PURPLE2], showValue: true, valAxisMaxVal: 100, dataLabelFontSize: 10 });
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '🎯 Score por tipo de medida');
+    const tipos = k.porTipoMedida.slice(0, 4);
+    const anchoGauge = 2.6, gap = 0.4;
+    const totalAncho = tipos.length * anchoGauge + (tipos.length - 1) * gap;
+    const xInicio = (13.33 - totalAncho) / 2;
+    tipos.forEach((t, i) => {
+      const x = xInicio + i * (anchoGauge + gap);
+      const score = Math.round(t.scoreProm);
+      const color = score >= 90 ? GREEN : score >= 70 ? AMBER : RED;
+      slide.addChart(pptx.ChartType.doughnut, [{
+        name: t.tipo, labels: ['Score', ''], values: [score, 100 - score]
+      }], { x, y: 1.5, w: anchoGauge, h: anchoGauge, chartColors: [color, 'F2F4F7'], showLegend: false, showValue: false, holeSize: 72 });
+      slide.addText(String(score), { x, y: 1.5 + anchoGauge / 2 - 0.4, w: anchoGauge, h: 0.8, fontSize: 30, bold: true, color, fontFace: 'Arial', align: 'center', valign: 'middle' });
+      slide.addText(t.tipo, { x, y: 1.5 + anchoGauge + 0.15, w: anchoGauge, h: 0.4, fontSize: 14, bold: true, color: TINTA, fontFace: 'Arial', align: 'center' });
+    });
     pieDePagina(slide);
   }
 
-  // --- Desacuerdos T≠U (tabla) -----------------------------------------------
+  // --- 8) Desacuerdos T≠U (tabla resumida) ---------------------------------------
   const desacuerdos = actas.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO');
   if (secciones.desacuerdos && desacuerdos.length) {
-    slide = pptx.addSlide();
-    tituloSlide(slide, `Desacuerdos T≠U (${desacuerdos.length})`);
+    slide = nuevaSlideClara();
+    tituloSlide(slide, `🧾 Desacuerdos Manual vs IA (${desacuerdos.length})`);
     const filasTabla = [
       [{ text: '#', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'Aliado', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'Manual', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'IA', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } }]
     ];
-    desacuerdos.slice(0, 14).forEach(a => {
+    desacuerdos.slice(0, 12).forEach(a => {
       filasTabla.push([
         { text: String(a['#']), options: { fontSize: 10.5 } },
         { text: a['Aliado'] || '', options: { fontSize: 10.5 } },
         { text: a['Supervisión Manual (T)'] || '', options: { fontSize: 10.5, color: RED } },
-        { text: a['Supervisión IA (U)'] || '', options: { fontSize: 10.5, color: '444CE7' } }
+        { text: a['Supervisión IA (U)'] || '', options: { fontSize: 10.5, color: BLUE } }
       ]);
     });
-    slide.addTable(filasTabla, { x: 0.7, y: 1.25, w: 11.9, h: 5.2, fontFace: 'Arial', border: { type: 'solid', color: 'E4E7EC', pt: 1 } });
-    if (desacuerdos.length > 14) {
-      slide.addText(`…y ${desacuerdos.length - 14} más — ver el detalle completo en la app.`, { x: 0.7, y: 6.75, w: 11.9, h: 0.35, fontSize: 10, italic: true, color: GRIS_TEXTO, fontFace: 'Arial' });
+    slide.addTable(filasTabla, { x: 0.7, y: 1.25, w: 11.9, h: 5.0, fontFace: 'Arial', border: { type: 'solid', color: GRIS_BORDE, pt: 1 } });
+    if (desacuerdos.length > 12) {
+      slide.addText(`…y ${desacuerdos.length - 12} más — ver el detalle completo en la app.`, { x: 0.7, y: 6.5, w: 11.9, h: 0.35, fontSize: 10, italic: true, color: GRIS_TEXTO, fontFace: 'Arial' });
     }
     pieDePagina(slide);
   }
 
-  // --- Cierre (siempre) ---------------------------------------------------------
-  slide = pptx.addSlide();
-  slide.background = { color: PURPLE };
+  // --- 9) Conclusiones y recomendaciones -----------------------------------------
+  if (secciones.conclusiones) {
+    const { riesgos, oportunidades, recomendaciones } = calcularConclusiones(actas, k, topFallas);
+    slide = nuevaSlideClara();
+    tituloSlide(slide, '🧩 Conclusiones y recomendaciones');
+    const columnas = [
+      { titulo: '⚠️ Riesgos', color: RED, items: riesgos, x: 0.6 },
+      { titulo: '💡 Oportunidades', color: AMBER, items: oportunidades, x: 4.7 },
+      { titulo: '✅ Recomendaciones', color: GREEN, items: recomendaciones, x: 8.8 }
+    ];
+    columnas.forEach(col => {
+      slide.addShape(pptx.ShapeType.roundRect, { x: col.x, y: 1.2, w: 3.75, h: 5.3, rectRadius: 0.08, fill: { color: GRIS_CLARO }, line: { color: GRIS_BORDE, width: 1 } });
+      slide.addShape(pptx.ShapeType.roundRect, { x: col.x, y: 1.2, w: 3.75, h: 0.08, rectRadius: 0, fill: { color: col.color }, line: { type: 'none' } });
+      slide.addText(col.titulo, { x: col.x + 0.2, y: 1.35, w: 3.35, h: 0.4, fontSize: 14, bold: true, color: TINTA, fontFace: 'Arial' });
+      slide.addText(col.items.map(i => ({ text: i, options: { bullet: { code: '25CF', color: col.color }, breakLine: true, paraSpaceAfter: 12 } })), {
+        x: col.x + 0.2, y: 1.85, w: 3.35, h: 4.5, fontSize: 11.5, color: TINTA, fontFace: 'Arial', valign: 'top'
+      });
+    });
+    pieDePagina(slide);
+  }
+
+  // --- 10) Cierre (siempre) — fondo claro con banda de acento ---------------------
+  slide = nuevaSlideClara();
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 7.5, fill: { color: PURPLE }, line: { type: 'none' } });
   dibujarLogoEnerbit(slide, 5.2, 2.7, 0.7, true);
   slide.addText('Gracias', { x: 0.6, y: 4.1, w: 12.13, h: 0.8, fontSize: 30, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center' });
-  slide.addText('Auditoría CCE · enerBit S.A. ESP', { x: 0.6, y: 4.85, w: 12.13, h: 0.4, fontSize: 13, color: 'D6BCFA', fontFace: 'Arial', align: 'center' });
+  slide.addText('Auditoría CCE · enerBit S.A. ESP', { x: 0.6, y: 4.85, w: 12.13, h: 0.4, fontSize: 13, color: 'E9D5FF', fontFace: 'Arial', align: 'center' });
 
   await pptx.writeFile({ fileName: `Auditoria_CCE_${new Date().toISOString().slice(0, 10)}.pptx` });
   mostrarToast('PowerPoint descargado.', 'success');
