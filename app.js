@@ -298,7 +298,7 @@ function configurarAsistente() {
   document.getElementById('btnAsistenteBuscarGraficar').addEventListener('click', () => {
     renderBuscadorGraficas();
   });
-  document.getElementById('btnAsistentePowerPoint').addEventListener('click', () => generarPowerPoint());
+  document.getElementById('btnAsistentePowerPoint').addEventListener('click', () => renderOpcionesPowerPoint());
 
   document.getElementById('formPreguntaAsistente').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1873,22 +1873,122 @@ function renderBarraApilada(contenedorId, segmentos) {
 }
 
 // ============================================================================
+// OPCIONES DEL POWERPOINT — antes de generar, se pregunta qué incluir
+// (en vez de armar siempre las mismas 8 diapositivas con todo).
+// ============================================================================
+const SECCIONES_PPT = [
+  { id: 'hallazgosClave', nombre: '📌 Hallazgos clave (texto)' },
+  { id: 'resumen', nombre: 'Resumen ejecutivo (KPIs)' },
+  { id: 'conformidadGeneral', nombre: 'Conformidad general' },
+  { id: 'porAliado', nombre: 'Conformidad por aliado' },
+  { id: 'topFallas', nombre: 'Top de fallas más comunes' },
+  { id: 'scorePorTipo', nombre: 'Score por tipo de medida' },
+  { id: 'desacuerdos', nombre: 'Desacuerdos T≠U' }
+];
+
+function renderOpcionesPowerPoint() {
+  const cont = document.getElementById('asistenteContenido');
+  cont.innerHTML = `
+    <div class="asistente-resumen">
+      <span class="emoji">📽️</span>
+      <div><strong>¿Qué quieres incluir en el PowerPoint?</strong>
+      <span>Desmarca lo que no necesites, y acota por fecha si quieres</span></div>
+    </div>
+    <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
+      ${SECCIONES_PPT.map(s => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 2px; font-size:12.5px; color:var(--ink-700);">
+          <input type="checkbox" class="chk-seccion-ppt" value="${s.id}" checked> ${escapeHtml(s.nombre)}
+        </label>`).join('')}
+    </div>
+    <div class="asistente-pregunta" style="padding:0 0 14px;">
+      <label class="toolbar-date-label">Desde <input type="date" id="pptFechaDesde"></label>
+      <label class="toolbar-date-label">Hasta <input type="date" id="pptFechaHasta"></label>
+    </div>
+    <button type="button" class="btn btn-primary btn-block" id="btnGenerarPptConOpciones">📽️ Generar PowerPoint</button>
+    <button class="btn btn-ghost btn-block" id="btnVolverDesdePpt" style="margin-top:10px;">← Volver al diagnóstico</button>
+  `;
+  document.getElementById('btnVolverDesdePpt').addEventListener('click', renderAsistente);
+  document.getElementById('btnGenerarPptConOpciones').addEventListener('click', (e) => {
+    const secciones = {};
+    cont.querySelectorAll('.chk-seccion-ppt').forEach(chk => { secciones[chk.value] = chk.checked; });
+    const desde = document.getElementById('pptFechaDesde').value;
+    const hasta = document.getElementById('pptFechaHasta').value;
+    generarPowerPoint(secciones, desde, hasta, e.target);
+  });
+}
+
+/**
+ * Resume en 3-5 frases los hallazgos más críticos (reutiliza el mismo
+ * diagnóstico del asistente), para la diapositiva de texto — así el
+ * PowerPoint no depende solo de gráficas para transmitir lo importante.
+ */
+function calcularHallazgosClave(actasFuente) {
+  const actas = actasFuente || state.actas;
+  const frases = [];
+
+  const criticos = actas.filter(a => (a['R01 Tensión'] || '').toString().toUpperCase() === 'FALLA').length;
+  if (criticos) frases.push(`${criticos} acta(s) con tensión inconsistente (R01) — el patrón más frecuente es digitar la tensión por baja en vez de por alta en medida indirecta.`);
+
+  const conteoAliado = {};
+  actas.forEach(a => {
+    if ((a['Supervisión Manual (T)'] || '') === 'NO CONFORMIDAD') {
+      conteoAliado[a['Aliado']] = (conteoAliado[a['Aliado']] || 0) + 1;
+    }
+  });
+  const peorAliado = Object.entries(conteoAliado).sort((a, b) => b[1] - a[1])[0];
+  if (peorAliado) frases.push(`${peorAliado[0]} concentra la mayor cantidad de no conformidades manuales (${peorAliado[1]} actas).`);
+
+  const desacuerdos = actas.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO').length;
+  if (desacuerdos) frases.push(`${desacuerdos} acta(s) con desacuerdo entre Supervisión Manual e IA, pendientes de resolver.`);
+
+  const topFallas = calcularTopFallas(1, actas);
+  if (topFallas.length) frases.push(`La falla más común es "${topFallas[0].etiqueta}", con ${topFallas[0].valor} ocurrencia(s).`);
+
+  const HOY = new Date();
+  const pendientesAntiguos = actas.filter(a => {
+    if ((a['Supervisión Manual (T)'] || '') !== 'PENDIENTE') return false;
+    const f = normalizarFechaCliente(a['Fecha']);
+    if (!f) return false;
+    return Math.floor((HOY - new Date(f)) / 86400000) > 15;
+  }).length;
+  if (pendientesAntiguos) frases.push(`${pendientesAntiguos} acta(s) llevan más de 15 días pendientes de supervisión manual.`);
+
+  return frases.slice(0, 5);
+}
+
+// ============================================================================
 // GENERAR POWERPOINT — arma un .pptx en el navegador con PptxGenJS (gratis,
 // sin servidor), con los KPIs y gráficas actuales convertidos en gráficas
 // NATIVAS de PowerPoint (editables ahí mismo, no imágenes pegadas).
 // ============================================================================
-async function generarPowerPoint() {
+async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
   if (typeof PptxGenJS === 'undefined') {
     mostrarToast('No se pudo cargar la librería de PowerPoint. Revisa tu conexión e intenta de nuevo.', 'error');
     return;
   }
-  const k = state.kpis;
-  if (!k) { mostrarToast('Espera a que carguen los datos antes de generar el PowerPoint.', 'error'); return; }
+  if (!state.kpis) { mostrarToast('Espera a que carguen los datos antes de generar el PowerPoint.', 'error'); return; }
 
+  secciones = secciones || Object.fromEntries(SECCIONES_PPT.map(s => [s.id, true]));
+  if (btnUsado) { btnUsado.disabled = true; btnUsado.textContent = 'Generando…'; }
   mostrarToast('Generando PowerPoint…', 'success');
 
+  // Si se puso un rango de fechas, se recalculan los KPIs solo con esas actas
+  // (en vez de usar siempre el total general) — así el PPT refleja justo el
+  // período que se pidió.
+  let actas = state.actas;
+  if (fechaDesde || fechaHasta) {
+    actas = actas.filter(a => {
+      const f = normalizarFechaCliente(a['Fecha']);
+      if (!f) return false;
+      if (fechaDesde && f < fechaDesde) return false;
+      if (fechaHasta && f > fechaHasta) return false;
+      return true;
+    });
+  }
+  const k = calcularKpisLocal(actas);
+
   const PURPLE = '501C7C', PURPLE2 = '7028AE', ORANGE = 'FF7900',
-    GREEN = '039855', RED = 'D92D20', AMBER = '92400E';
+    GREEN = '039855', RED = 'D92D20', AMBER = '92400E', GRIS_TEXTO = '667085';
 
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'CCE', width: 13.33, height: 7.5 });
@@ -1896,11 +1996,6 @@ async function generarPowerPoint() {
   pptx.author = 'Asistente CCE';
   pptx.title = 'Auditoría CCE — enerBit';
 
-  /**
-   * Dibuja el wordmark real de enerBit ("ener" en naranja + "Bit" en morado,
-   * o "Bit" en blanco cuando el fondo de la diapositiva es oscuro) usando
-   * texto nativo de PowerPoint — sin depender de ningún archivo de imagen.
-   */
   const dibujarLogoEnerbit = (slide, x, y, alturaTexto, sobreFondoOscuro) => {
     slide.addText([
       { text: 'ener', options: { color: ORANGE } },
@@ -1911,118 +2006,185 @@ async function generarPowerPoint() {
     });
   };
 
-  /** Agrega el wordmark chiquito como marca de agua discreta en una esquina. */
-  const marcaDeAgua = (slide) => {
-    dibujarLogoEnerbit(slide, 11.55, 7.05, 0.22, false);
+  // Pie de página minimalista y consistente: logo chico + número de diapositiva.
+  // Se numera aparte (no con el contador nativo de pptx) para tener control total.
+  let numeroSlide = 0;
+  const pieDePagina = (slide) => {
+    numeroSlide++;
+    dibujarLogoEnerbit(slide, 0.4, 7.08, 0.16, false);
+    slide.addText(String(numeroSlide), { x: 12.9, y: 7.05, w: 0.4, h: 0.25, fontSize: 9, color: GRIS_TEXTO, fontFace: 'Arial', align: 'right' });
   };
 
-  // --- Portada -------------------------------------------------------------
+  const tituloSlide = (slide, texto) => {
+    slide.addText(texto, { x: 0.6, y: 0.35, w: 12.1, h: 0.55, fontSize: 24, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addShape(pptx.ShapeType.line, { x: 0.6, y: 0.92, w: 12.1, h: 0, line: { color: 'E4E7EC', width: 1 } });
+  };
+
+  const rangoTexto = (fechaDesde || fechaHasta)
+    ? `Período: ${fechaDesde || '…'} a ${fechaHasta || '…'}` : 'Todo el período disponible';
+
+  // --- Portada (siempre) -----------------------------------------------------
   let slide = pptx.addSlide();
   slide.background = { color: PURPLE };
   dibujarLogoEnerbit(slide, 0.6, 0.5, 0.5, true);
-  slide.addText('Auditoría CCE', { x: 0.6, y: 2.6, w: 12, h: 1, fontSize: 44, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
-  slide.addText('enerBit S.A. ESP', { x: 0.6, y: 3.5, w: 12, h: 0.5, fontSize: 20, color: 'F3E8FF', fontFace: 'Arial' });
-  slide.addText('Generado el ' + new Date().toLocaleString('es-CO'), { x: 0.6, y: 4.1, w: 12, h: 0.4, fontSize: 12, color: 'D6BCFA', fontFace: 'Arial' });
+  slide.addText('Auditoría CCE', { x: 0.6, y: 2.7, w: 12.13, h: 1, fontSize: 40, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+  slide.addText('enerBit S.A. ESP', { x: 0.6, y: 3.55, w: 12.13, h: 0.5, fontSize: 18, color: 'F3E8FF', fontFace: 'Arial' });
+  slide.addText(rangoTexto + '  ·  Generado el ' + new Date().toLocaleDateString('es-CO'), { x: 0.6, y: 4.05, w: 12.13, h: 0.4, fontSize: 11, color: 'D6BCFA', fontFace: 'Arial' });
+
+  // --- Hallazgos clave (texto) -------------------------------------------------
+  if (secciones.hallazgosClave) {
+    const frases = calcularHallazgosClave(actas);
+    slide = pptx.addSlide();
+    tituloSlide(slide, 'Hallazgos clave');
+    if (frases.length) {
+      slide.addText(frases.map(f => ({ text: f, options: { bullet: { code: '2022' }, breakLine: true, paraSpaceAfter: 16 } })), {
+        x: 0.7, y: 1.25, w: 11.9, h: 5.2, fontSize: 16, color: '344055', fontFace: 'Arial', valign: 'top'
+      });
+    } else {
+      slide.addText('Sin hallazgos críticos que destacar en este período. 🎉', { x: 0.7, y: 3, w: 11.9, h: 1, fontSize: 16, color: '344055', fontFace: 'Arial' });
+    }
+    pieDePagina(slide);
+  }
 
   // --- KPIs (tabla) ----------------------------------------------------------
-  slide = pptx.addSlide();
-  slide.addText('Resumen ejecutivo', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 28, bold: true, color: PURPLE, fontFace: 'Arial' });
-  const filaKpi = (etiqueta, valor, color) => ([
-    { text: etiqueta, options: { bold: true, fontFace: 'Arial', fontSize: 14 } },
-    { text: String(valor), options: { fontFace: 'Arial', fontSize: 14, color, bold: true } }
-  ]);
-  slide.addTable([
-    filaKpi('Total actas', k.total, '344055'),
-    filaKpi('Conformes (Manual)', k.conformesManual, GREEN),
-    filaKpi('No conformes (Manual)', k.noConformesManual, RED),
-    filaKpi('Conformes (IA)', k.conformesIA, '444CE7'),
-    filaKpi('No conformes (IA)', k.noConformesIA, RED),
-    filaKpi('Desacuerdos T≠U', k.desacuerdos, AMBER)
-  ], { x: 0.5, y: 1.2, w: 7, h: 4, fontSize: 14, border: { type: 'solid', color: 'D0D5DD', pt: 1 }, autoPage: false });
-  marcaDeAgua(slide);
+  if (secciones.resumen) {
+    slide = pptx.addSlide();
+    tituloSlide(slide, 'Resumen ejecutivo');
+    const filaKpi = (etiqueta, valor, color) => ([
+      { text: etiqueta, options: { bold: true, fontFace: 'Arial', fontSize: 13 } },
+      { text: String(valor), options: { fontFace: 'Arial', fontSize: 13, color, bold: true } }
+    ]);
+    slide.addTable([
+      filaKpi('Total actas', k.total, '344055'),
+      filaKpi('Conformes (Manual)', k.conformesManual, GREEN),
+      filaKpi('No conformes (Manual)', k.noConformesManual, RED),
+      filaKpi('Conformes (IA)', k.conformesIA, '444CE7'),
+      filaKpi('No conformes (IA)', k.noConformesIA, RED),
+      filaKpi('Desacuerdos T≠U', k.desacuerdos, AMBER)
+    ], { x: 0.7, y: 1.25, w: 6.5, h: 4, fontSize: 13, border: { type: 'solid', color: 'E4E7EC', pt: 1 }, autoPage: false });
+    pieDePagina(slide);
+  }
 
   // --- Conformidad general (dona nativa) --------------------------------------
-  slide = pptx.addSlide();
-  slide.addText('Conformidad general', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
-  slide.addChart(pptx.ChartType.doughnut, [{
-    name: 'Conformidad',
-    labels: ['Conforme', 'No conforme', 'Pendiente'],
-    values: [k.conformesManual, k.noConformesManual, k.pendientesManual]
-  }], { x: 2, y: 1.2, w: 9, h: 5.5, chartColors: [GREEN, RED, AMBER], showLegend: true, legendPos: 'r', showValue: true });
-  marcaDeAgua(slide);
+  if (secciones.conformidadGeneral) {
+    slide = pptx.addSlide();
+    tituloSlide(slide, 'Conformidad general');
+    slide.addChart(pptx.ChartType.doughnut, [{
+      name: 'Conformidad',
+      labels: ['Conforme', 'No conforme', 'Pendiente'],
+      values: [k.conformesManual, k.noConformesManual, k.pendientesManual]
+    }], { x: 3, y: 1.3, w: 7.3, h: 5.3, chartColors: [GREEN, RED, AMBER], showLegend: true, legendPos: 'r', showValue: true, dataLabelFontSize: 11 });
+    pieDePagina(slide);
+  }
 
   // --- Conformidad por aliado (barras) -----------------------------------------
-  if (k.porAliado && k.porAliado.length) {
+  if (secciones.porAliado && k.porAliado && k.porAliado.length) {
     slide = pptx.addSlide();
-    slide.addText('Conformidad por aliado (% no conformidad)', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 22, bold: true, color: PURPLE, fontFace: 'Arial' });
+    tituloSlide(slide, 'Conformidad por aliado (% no conformidad)');
     slide.addChart(pptx.ChartType.bar, [{
       name: '% NC',
       labels: k.porAliado.map(a => a.aliado),
       values: k.porAliado.map(a => +(a.pctNC * 100).toFixed(1))
-    }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [RED], showValue: true, valAxisTitle: '% no conformidad' });
-    marcaDeAgua(slide);
+    }], { x: 0.7, y: 1.25, w: 11.9, h: 5.3, barDir: 'bar', chartColors: [RED], showValue: true, dataLabelFontSize: 10 });
+    pieDePagina(slide);
   }
 
   // --- Top de fallas más comunes ------------------------------------------------
-  const topFallas = calcularTopFallas(8);
-  if (topFallas.length) {
+  const topFallas = calcularTopFallas(8, actas);
+  if (secciones.topFallas && topFallas.length) {
     slide = pptx.addSlide();
-    slide.addText('Top de fallas más comunes', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+    tituloSlide(slide, 'Top de fallas más comunes');
     slide.addChart(pptx.ChartType.bar, [{
       name: 'Fallas',
       labels: topFallas.map(f => f.etiqueta),
       values: topFallas.map(f => f.valor)
-    }], { x: 0.5, y: 1.1, w: 12.3, h: 5.7, barDir: 'bar', chartColors: [ORANGE], showValue: true });
-    marcaDeAgua(slide);
+    }], { x: 0.7, y: 1.25, w: 11.9, h: 5.3, barDir: 'bar', chartColors: [ORANGE], showValue: true, dataLabelFontSize: 10 });
+    pieDePagina(slide);
   }
 
   // --- Score promedio por tipo de medida -----------------------------------------
-  if (k.porTipoMedida && k.porTipoMedida.length) {
+  if (secciones.scorePorTipo && k.porTipoMedida && k.porTipoMedida.length) {
     slide = pptx.addSlide();
-    slide.addText('Score promedio por tipo de medida', { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 24, bold: true, color: PURPLE, fontFace: 'Arial' });
+    tituloSlide(slide, 'Score promedio por tipo de medida');
     slide.addChart(pptx.ChartType.bar, [{
       name: 'Score',
       labels: k.porTipoMedida.map(t => t.tipo),
       values: k.porTipoMedida.map(t => +t.scoreProm.toFixed(1))
-    }], { x: 0.7, y: 1.2, w: 11.9, h: 5.5, chartColors: [PURPLE2], showValue: true, valAxisMaxVal: 100 });
-    marcaDeAgua(slide);
+    }], { x: 0.9, y: 1.3, w: 11.5, h: 5.2, chartColors: [PURPLE2], showValue: true, valAxisMaxVal: 100, dataLabelFontSize: 10 });
+    pieDePagina(slide);
   }
 
   // --- Desacuerdos T≠U (tabla) -----------------------------------------------
-  const desacuerdos = state.actas.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO');
-  if (desacuerdos.length) {
+  const desacuerdos = actas.filter(a => (a['Acuerdo T=U'] || '') === 'DESACUERDO');
+  if (secciones.desacuerdos && desacuerdos.length) {
     slide = pptx.addSlide();
-    slide.addText(`Desacuerdos T≠U (${desacuerdos.length})`, { x: 0.4, y: 0.3, w: 12, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+    tituloSlide(slide, `Desacuerdos T≠U (${desacuerdos.length})`);
     const filasTabla = [
       [{ text: '#', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'Aliado', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'Manual', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } },
        { text: 'IA', options: { bold: true, fill: { color: PURPLE2 }, color: 'FFFFFF' } }]
     ];
-    desacuerdos.slice(0, 15).forEach(a => {
+    desacuerdos.slice(0, 14).forEach(a => {
       filasTabla.push([
-        { text: String(a['#']), options: { fontSize: 11 } },
-        { text: a['Aliado'] || '', options: { fontSize: 11 } },
-        { text: a['Supervisión Manual (T)'] || '', options: { fontSize: 11, color: RED } },
-        { text: a['Supervisión IA (U)'] || '', options: { fontSize: 11, color: '444CE7' } }
+        { text: String(a['#']), options: { fontSize: 10.5 } },
+        { text: a['Aliado'] || '', options: { fontSize: 10.5 } },
+        { text: a['Supervisión Manual (T)'] || '', options: { fontSize: 10.5, color: RED } },
+        { text: a['Supervisión IA (U)'] || '', options: { fontSize: 10.5, color: '444CE7' } }
       ]);
     });
-    slide.addTable(filasTabla, { x: 0.5, y: 1.2, w: 12, h: 5.5, fontFace: 'Arial', border: { type: 'solid', color: 'D0D5DD', pt: 1 } });
-    if (desacuerdos.length > 15) {
-      slide.addText(`…y ${desacuerdos.length - 15} más — ver el detalle completo en la app.`, { x: 0.5, y: 6.8, w: 12, h: 0.4, fontSize: 11, italic: true, color: '667085' });
+    slide.addTable(filasTabla, { x: 0.7, y: 1.25, w: 11.9, h: 5.2, fontFace: 'Arial', border: { type: 'solid', color: 'E4E7EC', pt: 1 } });
+    if (desacuerdos.length > 14) {
+      slide.addText(`…y ${desacuerdos.length - 14} más — ver el detalle completo en la app.`, { x: 0.7, y: 6.75, w: 11.9, h: 0.35, fontSize: 10, italic: true, color: GRIS_TEXTO, fontFace: 'Arial' });
     }
-    marcaDeAgua(slide);
+    pieDePagina(slide);
   }
 
-  // --- Cierre ------------------------------------------------------------------
+  // --- Cierre (siempre) ---------------------------------------------------------
   slide = pptx.addSlide();
   slide.background = { color: PURPLE };
   dibujarLogoEnerbit(slide, 5.2, 2.7, 0.7, true);
-  slide.addText('Gracias', { x: 0.6, y: 4.1, w: 12.13, h: 0.8, fontSize: 32, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center' });
-  slide.addText('Auditoría CCE · enerBit S.A. ESP', { x: 0.6, y: 4.85, w: 12.13, h: 0.4, fontSize: 14, color: 'D6BCFA', fontFace: 'Arial', align: 'center' });
+  slide.addText('Gracias', { x: 0.6, y: 4.1, w: 12.13, h: 0.8, fontSize: 30, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center' });
+  slide.addText('Auditoría CCE · enerBit S.A. ESP', { x: 0.6, y: 4.85, w: 12.13, h: 0.4, fontSize: 13, color: 'D6BCFA', fontFace: 'Arial', align: 'center' });
 
   await pptx.writeFile({ fileName: `Auditoria_CCE_${new Date().toISOString().slice(0, 10)}.pptx` });
   mostrarToast('PowerPoint descargado.', 'success');
+  if (btnUsado) { btnUsado.disabled = false; btnUsado.textContent = '📽️ Generar PowerPoint'; }
+}
+
+/** Recalcula los mismos KPIs que buildKPIs() del backend, pero en el navegador sobre un subconjunto de actas (ej. filtrado por fecha). */
+function calcularKpisLocal(actas) {
+  const total = actas.length;
+  const contar = (campo, valor) => actas.filter(a => (a[campo] || '').toString().trim() === valor).length;
+  const conformesManual = contar('Supervisión Manual (T)', 'CONFORME');
+  const noConformesManual = contar('Supervisión Manual (T)', 'NO CONFORMIDAD');
+  const pendientesManual = contar('Supervisión Manual (T)', 'PENDIENTE');
+  const conformesIA = contar('Supervisión IA (U)', 'CONFORME');
+  const noConformesIA = contar('Supervisión IA (U)', 'NO CONFORMIDAD');
+  const desacuerdos = contar('Acuerdo T=U', 'DESACUERDO');
+
+  const aliados = {};
+  actas.forEach(a => {
+    const al = a['Aliado'] || 'Sin aliado';
+    if (!aliados[al]) aliados[al] = { actas: 0, ncManual: 0 };
+    aliados[al].actas++;
+    if ((a['Supervisión Manual (T)'] || '') === 'NO CONFORMIDAD') aliados[al].ncManual++;
+  });
+  const porAliado = Object.keys(aliados).map(nombre => ({
+    aliado: nombre, actas: aliados[nombre].actas,
+    pctNC: aliados[nombre].actas ? aliados[nombre].ncManual / aliados[nombre].actas : 0
+  })).sort((a, b) => b.pctNC - a.pctNC);
+
+  const tipos = {};
+  actas.forEach(a => {
+    const t = a['Tipo Medida'] || 'Sin tipo';
+    if (!tipos[t]) tipos[t] = { suma: 0, n: 0 };
+    const s = parseFloat(a['Score']);
+    if (!isNaN(s)) { tipos[t].suma += s; tipos[t].n++; }
+  });
+  const porTipoMedida = Object.keys(tipos).map(t => ({ tipo: t, scoreProm: tipos[t].n ? tipos[t].suma / tipos[t].n : 0 }));
+
+  return { total, conformesManual, noConformesManual, pendientesManual, conformesIA, noConformesIA, desacuerdos, porAliado, porTipoMedida };
 }
 // ============================================================================
 // SELECTOR DE VISTA (Barras / Dona / Barra apilada) — recuerda la elección
