@@ -686,15 +686,47 @@ function aplicarRangoFechaGlobal(registros, campoFecha) {
 }
 
 /** Dibuja "datos" como dona/apilada/barras (recomendado) dentro de un contenedor del sub-panel. */
-function renderizarSegunRecomendacion(idContenedor, datos) {
-  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+/** Dibuja "datos" en el contenedor con el tipo de gráfica indicado (barras/dona/apilada). */
+function dibujarTipoGrafica(idContenedor, datos, tipo) {
   const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
-  if (rec.tipo === 'dona') renderDona(idContenedor, coloreados);
-  else if (rec.tipo === 'apilada') renderBarraApilada(idContenedor, coloreados);
+  if (tipo === 'dona') renderDona(idContenedor, coloreados);
+  else if (tipo === 'apilada') renderBarraApilada(idContenedor, coloreados);
   else {
     const max = Math.max(...datos.map(d => d.valor), 1);
     renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) })), max);
   }
+}
+
+function renderizarSegunRecomendacion(idContenedor, datos) {
+  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+  dibujarTipoGrafica(idContenedor, datos, rec.tipo);
+  return rec;
+}
+
+/**
+ * Igual que renderizarSegunRecomendacion, pero además dibuja un selector de
+ * tipo de gráfica (Barras / Dona / Apilada) para que la persona elija con
+ * cuál quiere ver justo ese resultado, en vez de aceptar solo lo recomendado.
+ */
+function renderizarConSelectorTipo(idPicker, idContenedor, datos) {
+  const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
+  const opciones = ['barras', 'dona', 'apilada'];
+
+  document.getElementById(idPicker).innerHTML = opciones.map(op => `
+    <button type="button" class="btn-opcion-grafica ${op === rec.tipo ? 'is-active' : ''}"
+      data-tipo-grafica="${op}" data-contenedor="${idContenedor}">${NOMBRE_TIPO_GRAFICA[op]}</button>
+  `).join('');
+
+  dibujarTipoGrafica(idContenedor, datos, rec.tipo);
+
+  document.querySelectorAll(`#${idPicker} .btn-opcion-grafica`).forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll(`#${idPicker} .btn-opcion-grafica`).forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      dibujarTipoGrafica(btn.dataset.contenedor, datos, btn.dataset.tipoGrafica);
+    });
+  });
+
   return rec;
 }
 
@@ -800,11 +832,12 @@ function ejecutarBusquedaGrafica(texto) {
     const tituloConFiltro = campoInfoSup.campo + (tipoMedidaMatch ? ` (${tipoMedidaMatch})` : '') + ' — formulario';
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>${escapeHtml(tituloConFiltro)} <span class="severidad-pill sev-baja">${fuente.length} respuesta(s)</span></h4>
+      <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
       <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'formulario', campo: campoInfoSup.campo, tipoMedida: tipoMedidaMatch || '', titulo: tituloConFiltro })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, campoInfoSup.campo);
-    else renderizarSegunRecomendacion(idContenedor, datos);
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
@@ -818,12 +851,12 @@ function ejecutarBusquedaGrafica(texto) {
     }
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
-      <p class="panel-note" style="margin:0 0 10px;">💡 Ranking — siempre se ve mejor como barras que como dona.</p>
+      <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
       <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes' })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
-    else { const max = Math.max(...datos.map(d => d.valor), 1); renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max); }
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
@@ -841,11 +874,12 @@ function ejecutarBusquedaGrafica(texto) {
     }
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
       <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
+      <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
       <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
-    else renderizarSegunRecomendacion(idContenedor, datos);
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
@@ -890,10 +924,11 @@ function ejecutarBusquedaGrafica(texto) {
 
   resultadoCont.innerHTML = `<div class="hallazgo-grupo">
     <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
+    <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
     <div id="${idContenedor}" class="chart-svg-wrap"></div>
     <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'campo', campo: campoInfo.campo, titulo: campoInfo.campo })}'>📌 Fijar en el Dashboard</button>
   </div>`;
-  const rec = renderizarSegunRecomendacion(idContenedor, datos);
+  const rec = renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
   document.querySelector(`#${idContenedor}`).insertAdjacentHTML('beforebegin',
     `<p class="panel-note" style="margin:0 0 10px;">💡 ${escapeHtml(rec.motivo)} — mostrando como ${NOMBRE_TIPO_GRAFICA[rec.tipo]}. Escribe "tabla de ${campoInfo.campo.toLowerCase()}" si prefieres verlo en tabla.</p>`);
   conectarBotonFijarPanel(resultadoCont);
