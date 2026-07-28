@@ -1932,14 +1932,31 @@ function renderOpcionesPowerPoint() {
   cont.innerHTML = `
     <div class="asistente-resumen">
       <span class="emoji">📽️</span>
-      <div><strong>¿Qué quieres incluir en el PowerPoint?</strong>
-      <span>Desmarca lo que no necesites, y acota por fecha si quieres</span></div>
+      <div><strong>¿Qué tipo de presentación quieres?</strong>
+      <span>Completa (10 diapositivas) o reducida (1-2 tarjetas ejecutivas)</span></div>
     </div>
-    <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
-      ${SECCIONES_PPT.map(s => `
+    <div class="preferencia-opciones" style="margin-bottom:14px;">
+      <button type="button" class="btn-opcion-grafica is-active" data-modo-ppt="completa">📽️ Completa</button>
+      <button type="button" class="btn-opcion-grafica" data-modo-ppt="reducida">📇 Reducida (tarjetas)</button>
+    </div>
+    <div id="opcionesPptCompleta">
+      <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
+        ${SECCIONES_PPT.map(s => `
+          <label style="display:flex; align-items:center; gap:8px; padding:6px 2px; font-size:12.5px; color:var(--ink-700);">
+            <input type="checkbox" class="chk-seccion-ppt" value="${s.id}" checked> ${escapeHtml(s.nombre)}
+          </label>`).join('')}
+      </div>
+    </div>
+    <div id="opcionesPptReducida" style="display:none;">
+      <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
         <label style="display:flex; align-items:center; gap:8px; padding:6px 2px; font-size:12.5px; color:var(--ink-700);">
-          <input type="checkbox" class="chk-seccion-ppt" value="${s.id}" checked> ${escapeHtml(s.nombre)}
-        </label>`).join('')}
+          <input type="checkbox" class="chk-tarjeta-ppt" value="noConformidad" checked> Tarjeta 1: Tasa de No Conformidad
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 2px; font-size:12.5px; color:var(--ink-700);">
+          <input type="checkbox" class="chk-tarjeta-ppt" value="porAliado" checked> Tarjeta 2: Riesgo por aliado
+        </label>
+      </div>
+      <p class="panel-note" style="margin:0 0 12px;">Formato "tarjeta ejecutiva": número, título, gráfica + tabla, mini-indicadores de estado y nota — igual al ejemplo que compartiste.</p>
     </div>
     <div class="asistente-pregunta" style="padding:0 0 14px;">
       <label class="toolbar-date-label">Desde <input type="date" id="pptFechaDesde"></label>
@@ -1948,13 +1965,31 @@ function renderOpcionesPowerPoint() {
     <button type="button" class="btn btn-primary btn-block" id="btnGenerarPptConOpciones">📽️ Generar PowerPoint</button>
     <button class="btn btn-ghost btn-block" id="btnVolverDesdePpt" style="margin-top:10px;">← Volver al diagnóstico</button>
   `;
+
+  let modoActual = 'completa';
+  cont.querySelectorAll('[data-modo-ppt]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      modoActual = btn.dataset.modoPpt;
+      cont.querySelectorAll('[data-modo-ppt]').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      document.getElementById('opcionesPptCompleta').style.display = modoActual === 'completa' ? '' : 'none';
+      document.getElementById('opcionesPptReducida').style.display = modoActual === 'reducida' ? '' : 'none';
+    });
+  });
+
   document.getElementById('btnVolverDesdePpt').addEventListener('click', renderAsistente);
   document.getElementById('btnGenerarPptConOpciones').addEventListener('click', (e) => {
-    const secciones = {};
-    cont.querySelectorAll('.chk-seccion-ppt').forEach(chk => { secciones[chk.value] = chk.checked; });
     const desde = document.getElementById('pptFechaDesde').value;
     const hasta = document.getElementById('pptFechaHasta').value;
-    generarPowerPoint(secciones, desde, hasta, e.target);
+    if (modoActual === 'reducida') {
+      const tarjetas = {};
+      cont.querySelectorAll('.chk-tarjeta-ppt').forEach(chk => { tarjetas[chk.value] = chk.checked; });
+      generarPowerPointReducido(tarjetas, desde, hasta, e.target);
+    } else {
+      const secciones = {};
+      cont.querySelectorAll('.chk-seccion-ppt').forEach(chk => { secciones[chk.value] = chk.checked; });
+      generarPowerPoint(secciones, desde, hasta, e.target);
+    }
   });
 }
 
@@ -2290,6 +2325,187 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
 }
 
 /** Recalcula los mismos KPIs que buildKPIs() del backend, pero en el navegador sobre un subconjunto de actas (ej. filtrado por fecha). */
+/** Agrupa las actas por mes y calcula, para cada uno, actas totales / no conformes / tasa. */
+function calcularTasaNCPorMes(actas) {
+  const grupos = {};
+  actas.forEach(a => {
+    const mes = normalizarFechaCliente(a['Fecha']).slice(0, 7);
+    if (!mes) return;
+    if (!grupos[mes]) grupos[mes] = { total: 0, noConf: 0 };
+    grupos[mes].total++;
+    if ((a['Supervisión Manual (T)'] || '') === 'NO CONFORMIDAD') grupos[mes].noConf++;
+  });
+  const NOMBRES_MES = { '01': 'Ene', '02': 'Feb', '03': 'Mar', '04': 'Abr', '05': 'May', '06': 'Jun',
+    '07': 'Jul', '08': 'Ago', '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dic' };
+  return Object.keys(grupos).sort().map(mes => ({
+    mes: NOMBRES_MES[mes.slice(5, 7)] || mes,
+    total: grupos[mes].total,
+    noConf: grupos[mes].noConf,
+    tasa: grupos[mes].total ? (grupos[mes].noConf / grupos[mes].total) * 100 : 0
+  }));
+}
+
+/**
+ * Genera la presentación "reducida": 1-2 diapositivas en formato de tarjeta
+ * ejecutiva (número, categoría, título, gráfica + tabla, mini-indicadores
+ * de estado, nota) — replicando el estilo del ejemplo real de enerBit que
+ * se compartió (círculo numerado, subrayado naranja, tarjetas de estado con
+ * fondo tintado, logo con el respaldo de Celsia).
+ */
+async function generarPowerPointReducido(tarjetas, fechaDesde, fechaHasta, btnUsado) {
+  if (typeof PptxGenJS === 'undefined') {
+    mostrarToast('No se pudo cargar la librería de PowerPoint. Revisa tu conexión e intenta de nuevo.', 'error');
+    return;
+  }
+  if (!state.kpis) { mostrarToast('Espera a que carguen los datos antes de generar el PowerPoint.', 'error'); return; }
+
+  if (btnUsado) { btnUsado.disabled = true; btnUsado.textContent = 'Generando…'; }
+  mostrarToast('Generando presentación reducida…', 'success');
+
+  let actas = state.actas;
+  if (fechaDesde || fechaHasta) {
+    actas = actas.filter(a => {
+      const f = normalizarFechaCliente(a['Fecha']);
+      if (!f) return false;
+      if (fechaDesde && f < fechaDesde) return false;
+      if (fechaHasta && f > fechaHasta) return false;
+      return true;
+    });
+  }
+  const k = calcularKpisLocal(actas);
+
+  const PURPLE = '501C7C', ORANGE = 'FF7900', GREEN = '12B76A', RED = 'D92D20',
+    AMBER_TXT = 'B54708', AMBER_BG = 'FFF4E5', GREEN_BG = 'E7F9F0', RED_BG = 'FCE9E9',
+    PURPLE_BG = 'F3E8FF', GRIS_TEXTO = '667085', GRIS_BORDE = 'E4E7EC', TINTA = '1D2939';
+
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'CCE', width: 13.33, height: 7.5 });
+  pptx.layout = 'CCE';
+  pptx.author = 'Asistente CCE';
+  pptx.title = 'Auditoría CCE — enerBit (resumen)';
+
+  /** Logo con el mismo lockup del ejemplo real: "enerBit" + "Con el respaldo de Celsia" en texto. */
+  const dibujarLogoConRespaldo = (slide, x, y) => {
+    slide.addText([
+      { text: 'ener', options: { color: ORANGE } },
+      { text: 'Bit', options: { color: PURPLE } }
+    ], { x, y, w: 2.6, h: 0.55, fontSize: 26, bold: true, fontFace: 'Arial', align: 'right' });
+    slide.addText('Con el respaldo de Celsia', { x, y: y + 0.5, w: 2.6, h: 0.25, fontSize: 8.5, color: GRIS_TEXTO, fontFace: 'Arial', align: 'right' });
+  };
+
+  /** Mini-tarjeta de estado con fondo tintado, como en el ejemplo (Promedio / Meta / etc.). */
+  const dibujarStatCard = (slide, x, y, w, h, opts) => {
+    slide.addShape(pptx.ShapeType.roundRect, { x, y, w, h, rectRadius: 0.08, fill: { color: opts.fondo }, line: { type: 'none' } });
+    slide.addText(opts.etiqueta, { x: x + 0.15, y: y + 0.1, w: w - 0.3, h: 0.3, fontSize: 10.5, color: GRIS_TEXTO, fontFace: 'Arial' });
+    slide.addText(`${opts.valor} ${opts.icono || ''}`, { x: x + 0.15, y: y + 0.38, w: w - 0.3, h: 0.5, fontSize: 22, bold: true, color: opts.color, fontFace: 'Arial' });
+  };
+
+  const footer = (slide) => {
+    slide.addText('enerbit.co', { x: 0.5, y: 7.05, w: 2, h: 0.3, fontSize: 10, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addText('Somos una empresa 100% digital de energía', { x: 8.5, y: 7.0, w: 4.3, h: 0.35, fontSize: 9.5, color: GRIS_TEXTO, fontFace: 'Arial', align: 'right' });
+  };
+
+  const encabezadoTarjeta = (slide, numero, categoria, titulo, descripcion) => {
+    slide.background = { color: 'FCFCFD' };
+    slide.addShape(pptx.ShapeType.ellipse, { x: 0.4, y: 0.35, w: 0.7, h: 0.7, fill: { color: PURPLE }, line: { type: 'none' } });
+    slide.addText(String(numero), { x: 0.4, y: 0.35, w: 0.7, h: 0.7, fontSize: 24, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center', valign: 'middle' });
+    slide.addText(categoria.toUpperCase(), { x: 1.3, y: 0.32, w: 8, h: 0.3, fontSize: 12, bold: true, color: ORANGE, fontFace: 'Arial', charSpacing: 1 });
+    slide.addText(titulo, { x: 1.3, y: 0.56, w: 8, h: 0.6, fontSize: 26, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addShape(pptx.ShapeType.roundRect, { x: 1.3, y: 1.28, w: 1.7, h: 0.06, rectRadius: 0.03, fill: { color: ORANGE }, line: { type: 'none' } });
+    slide.addText(descripcion, { x: 0.4, y: 1.48, w: 9.5, h: 0.3, fontSize: 10.5, color: GRIS_TEXTO, fontFace: 'Arial' });
+    dibujarLogoConRespaldo(slide, 10.3, 0.35);
+  };
+
+  // --- Tarjeta 1: Tasa de No Conformidad Manual, por mes -------------------------
+  if (tarjetas.noConformidad) {
+    const porMes = calcularTasaNCPorMes(actas);
+    const slide = pptx.addSlide();
+    encabezadoTarjeta(slide, 1, 'Auditoría · CCE', 'Tasa de No Conformidad Manual',
+      'Tasa = Actas No Conformes / Total de actas revisadas  |  Supervisión manual, por mes');
+
+    if (porMes.length) {
+      slide.addChart(pptx.ChartType.bar, [{
+        name: 'Tasa NC %', labels: porMes.map(m => m.mes), values: porMes.map(m => +m.tasa.toFixed(1))
+      }], { x: 0.4, y: 1.95, w: 6.6, h: 4.1, chartColors: [ORANGE], showValue: true, valAxisTitle: '% no conformidad', catAxisTitle: 'Mes' });
+
+      const filasTabla = [[
+        { text: 'Mes', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } },
+        { text: 'Actas', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } },
+        { text: 'No Conf.', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } },
+        { text: 'Tasa', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } }
+      ]];
+      porMes.forEach(m => {
+        const critico = m.tasa >= 10;
+        filasTabla.push([
+          { text: m.mes, options: { fontSize: 10.5, bold: true } },
+          { text: String(m.total), options: { fontSize: 10.5 } },
+          { text: String(m.noConf), options: { fontSize: 10.5 } },
+          { text: m.tasa.toFixed(2) + '%', options: { fontSize: 10.5, bold: critico, color: critico ? RED : TINTA } }
+        ]);
+      });
+      slide.addTable(filasTabla, { x: 7.3, y: 1.95, w: 5.6, h: 4.1, fontFace: 'Arial', border: { type: 'solid', color: GRIS_BORDE, pt: 1 } });
+
+      const promedio = porMes.reduce((s, m) => s + m.tasa, 0) / porMes.length;
+      const ultimo = porMes[porMes.length - 1];
+      const anterior = porMes[porMes.length - 2];
+      const cardW = 2.98, cardH = 0.95, y0 = 6.25;
+      dibujarStatCard(slide, 0.4, y0, cardW, cardH, { etiqueta: 'Promedio período', valor: promedio.toFixed(1) + '%', icono: promedio < 5 ? '✅' : '⚠️', color: promedio < 5 ? GREEN : AMBER_TXT, fondo: promedio < 5 ? GREEN_BG : AMBER_BG });
+      dibujarStatCard(slide, 3.55, y0, cardW, cardH, { etiqueta: `Último mes (${ultimo.mes})`, valor: ultimo.tasa.toFixed(1) + '%', icono: ultimo.tasa >= 10 ? '⚠️' : '✅', color: ultimo.tasa >= 10 ? RED : GREEN, fondo: ultimo.tasa >= 10 ? RED_BG : GREEN_BG });
+      dibujarStatCard(slide, 6.7, y0, cardW, cardH, { etiqueta: 'Meta de referencia', valor: '< 5%', icono: '', color: PURPLE, fondo: PURPLE_BG });
+      dibujarStatCard(slide, 9.85, y0, cardW, cardH, { etiqueta: 'Total actas', valor: String(k.total), icono: '', color: TINTA, fondo: 'F2F4F7' });
+
+      if (anterior && ultimo.tasa > anterior.tasa) {
+        slide.addText(`⚠️ ${ultimo.mes} ya superó a ${anterior.mes} (${ultimo.tasa.toFixed(1)}% vs ${anterior.tasa.toFixed(1)}%).`, { x: 0.4, y: 7.28, w: 12.5, h: 0.25, fontSize: 10.5, italic: true, color: RED, fontFace: 'Arial' });
+      }
+    } else {
+      slide.addText('No hay suficientes actas con fecha para calcular la tendencia mensual.', { x: 0.5, y: 3, w: 12, h: 0.5, fontSize: 13, color: GRIS_TEXTO, fontFace: 'Arial' });
+    }
+    footer(slide);
+  }
+
+  // --- Tarjeta 2: Riesgo por aliado -----------------------------------------------
+  if (tarjetas.porAliado && k.porAliado && k.porAliado.length) {
+    const slide = pptx.addSlide();
+    encabezadoTarjeta(slide, tarjetas.noConformidad ? 2 : 1, 'Auditoría · Aliados', 'Aliados con mayor no conformidad',
+      '% No conformidad manual sobre el total de actas de cada aliado');
+
+    const top5 = k.porAliado.slice(0, 5);
+    slide.addChart(pptx.ChartType.bar, [{
+      name: '% NC', labels: top5.map(a => a.aliado), values: top5.map(a => +(a.pctNC * 100).toFixed(1))
+    }], { x: 0.4, y: 1.95, w: 6.6, h: 4.1, barDir: 'bar', chartColors: [RED], showValue: true, valAxisTitle: '% no conformidad' });
+
+    const filasTabla = [[
+      { text: 'Aliado', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } },
+      { text: 'Actas', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } },
+      { text: '% NC', options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 10.5 } }
+    ]];
+    top5.forEach(a => {
+      filasTabla.push([
+        { text: a.aliado, options: { fontSize: 10 } },
+        { text: String(a.actas), options: { fontSize: 10.5 } },
+        { text: (a.pctNC * 100).toFixed(1) + '%', options: { fontSize: 10.5, bold: true, color: a.pctNC >= 0.5 ? RED : TINTA } }
+      ]);
+    });
+    slide.addTable(filasTabla, { x: 7.3, y: 1.95, w: 5.6, h: 4.1, fontFace: 'Arial', border: { type: 'solid', color: GRIS_BORDE, pt: 1 } });
+
+    const ordenAsc = k.porAliado.slice().sort((a, b) => a.pctNC - b.pctNC);
+    const mejor = ordenAsc[0], peor = ordenAsc[ordenAsc.length - 1];
+    const promedioGeneral = k.porAliado.reduce((s, a) => s + a.pctNC, 0) / k.porAliado.length;
+    const cardW = 2.98, cardH = 0.95, y0 = 6.25;
+    dibujarStatCard(slide, 0.4, y0, cardW, cardH, { etiqueta: '🏆 Mejor aliado', valor: mejor.aliado.length > 16 ? mejor.aliado.slice(0, 16) + '…' : mejor.aliado, icono: '', color: GREEN, fondo: GREEN_BG });
+    dibujarStatCard(slide, 3.55, y0, cardW, cardH, { etiqueta: '⚠️ Mayor riesgo', valor: peor.aliado.length > 16 ? peor.aliado.slice(0, 16) + '…' : peor.aliado, icono: '', color: RED, fondo: RED_BG });
+    dibujarStatCard(slide, 6.7, y0, cardW, cardH, { etiqueta: 'Promedio general', valor: (promedioGeneral * 100).toFixed(1) + '%', icono: '', color: PURPLE, fondo: PURPLE_BG });
+    dibujarStatCard(slide, 9.85, y0, cardW, cardH, { etiqueta: 'Aliados evaluados', valor: String(k.porAliado.length), icono: '', color: TINTA, fondo: 'F2F4F7' });
+
+    slide.addText(`⚠️ ${peor.aliado} concentra el mayor riesgo — priorizar seguimiento y capacitación.`, { x: 0.4, y: 7.28, w: 12.5, h: 0.25, fontSize: 10.5, italic: true, color: RED, fontFace: 'Arial' });
+    footer(slide);
+  }
+
+  await pptx.writeFile({ fileName: `Auditoria_CCE_resumen_${new Date().toISOString().slice(0, 10)}.pptx` });
+  mostrarToast('Presentación reducida descargada.', 'success');
+  if (btnUsado) { btnUsado.disabled = false; btnUsado.textContent = '📽️ Generar PowerPoint'; }
+}
+
 function calcularKpisLocal(actas) {
   const total = actas.length;
   const contar = (campo, valor) => actas.filter(a => (a[campo] || '').toString().trim() === valor).length;
