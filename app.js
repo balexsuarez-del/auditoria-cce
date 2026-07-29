@@ -439,7 +439,9 @@ const ESTADOS_RECONOCIDOS = [
   { claves: ['pendiente'], campo: 'Supervisión Manual (T)', valor: 'PENDIENTE' },
   { claves: ['desacuerdo'], campo: 'Acuerdo T=U', valor: 'DESACUERDO' }
 ];
-const PALETA_MULTICOLOR = ['var(--purple-500)', 'var(--orange-500)', 'var(--green-600)', 'var(--blue-600)', 'var(--red-600)', 'var(--amber-700)', 'var(--purple-900)'];
+const PALETA_MULTICOLOR = ['var(--purple-500)', 'var(--orange-500)', 'var(--green-600)', 'var(--blue-600)',
+  'var(--red-600)', 'var(--amber-700)', '#0E9384' /* teal */, '#DD2590' /* rosa */,
+  'var(--purple-900)', '#667085' /* gris */];
 
 // Campos del formulario completo de "Supervision" (Microsoft Forms) — se
 // activan con la palabra "formulario" para no confundirse con los campos
@@ -892,7 +894,7 @@ function renderLineaGenerica(contenedorId, datos) {
   const linea = coords.map(c => `${c.x},${c.y}`).join(' ');
   const area = `${padding},${h - padding} ${linea} ${coords[coords.length - 1].x},${h - padding}`;
   const puntos = coords.map(c => `
-    <circle cx="${c.x}" cy="${c.y}" r="4" fill="var(--purple-500)"></circle>
+    <circle cx="${c.x}" cy="${c.y}" r="4" fill="var(--purple-500)"><title>${escapeHtml(String(c.d.etiqueta))}: ${c.d.valor}</title></circle>
     <text x="${c.x}" y="${c.y - 10}" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-700)">${c.d.valor}</text>
     <text x="${c.x}" y="${h - 10}" text-anchor="middle" font-size="8.5" fill="var(--ink-500)">${escapeHtml(String(c.d.etiqueta)).slice(0, 8)}</text>
   `).join('');
@@ -918,7 +920,7 @@ function renderCascada(contenedorId, datos) {
     const x = padding + i * anchoBarra;
     const alto = Math.max(yInicio - yFin, 1);
     const color = PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length];
-    svg += `<rect x="${x + 3}" y="${yFin}" width="${anchoBarra - 6}" height="${alto}" fill="${color}" rx="2"></rect>
+    svg += `<rect x="${x + 3}" y="${yFin}" width="${anchoBarra - 6}" height="${alto}" fill="${color}" rx="2"><title>${escapeHtml(String(d.etiqueta))}: ${d.valor}</title></rect>
       <text x="${x + anchoBarra / 2}" y="${yFin - 6}" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-700)">${d.valor}</text>
       <text x="${x + anchoBarra / 2}" y="${h - 8}" text-anchor="middle" font-size="8" fill="var(--ink-500)">${escapeHtml(String(d.etiqueta)).slice(0, 8)}</text>`;
   });
@@ -960,6 +962,46 @@ function renderizarConSelectorTipo(idPicker, idContenedor, datos) {
   return rec;
 }
 
+/**
+ * Hace que CUALQUIER tabla .data-table se pueda ordenar por columna con un
+ * clic en su encabezado — detecta automáticamente si la columna es numérica
+ * (incluyendo "12.3%") o de texto, y alterna ascendente/descendente. Se llama
+ * una vez después de generar el HTML de la tabla.
+ */
+function hacerTablaOrdenable(idContenedor) {
+  const tabla = document.querySelector(`#${idContenedor} table.data-table`);
+  if (!tabla) return;
+  const encabezados = tabla.querySelectorAll('thead th');
+  encabezados.forEach((th, colIdx) => {
+    th.style.cursor = 'pointer';
+    th.dataset.dirOrden = '';
+    th.addEventListener('click', () => {
+      const tbody = tabla.querySelector('tbody');
+      const filas = Array.from(tbody.querySelectorAll('tr'));
+      const asc = th.dataset.dirOrden !== 'asc';
+
+      const valorCelda = (fila) => (fila.children[colIdx] || {}).textContent || '';
+      const esNumerico = filas.every(f => {
+        const t = valorCelda(f).replace('%', '').replace(/,/g, '').trim();
+        return t === '' || !isNaN(parseFloat(t));
+      });
+
+      filas.sort((a, b) => {
+        let va = valorCelda(a).trim(), vb = valorCelda(b).trim();
+        if (esNumerico) { va = parseFloat(va.replace('%', '')) || 0; vb = parseFloat(vb.replace('%', '')) || 0; }
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
+      });
+
+      filas.forEach(f => tbody.appendChild(f));
+      encabezados.forEach(h => { h.dataset.dirOrden = ''; h.classList.remove('th-asc', 'th-desc'); });
+      th.dataset.dirOrden = asc ? 'asc' : 'desc';
+      th.classList.add(asc ? 'th-asc' : 'th-desc');
+    });
+  });
+}
+
 /** Dibuja "datos" como una tabla simple de 2 columnas (Etiqueta / Cantidad). */
 function renderizarComoTabla(idContenedor, datos, nombreColumna) {
   const total = datos.reduce((s, d) => s + d.valor, 0);
@@ -971,6 +1013,7 @@ function renderizarComoTabla(idContenedor, datos, nombreColumna) {
       <thead><tr><th>${escapeHtml(nombreColumna)}</th><th style="text-align:right;">Cantidad</th><th style="text-align:right;">%</th></tr></thead>
       <tbody>${filas}</tbody>
     </table>`;
+  hacerTablaOrdenable(idContenedor);
 }
 
 /** Interpreta el pedido (top de fallas / cruce por categoría / campo simple) y lo muestra como gráfica o tabla. */
@@ -1050,6 +1093,7 @@ function ejecutarBusquedaGrafica(texto) {
         </div>
         ${fuente.length > 30 ? `<p class="panel-note">…y ${fuente.length - 30} más.</p>` : ''}
       </div>`;
+      hacerTablaOrdenable('resultadoBuscadorGraficas');
       return;
     }
 
@@ -1512,6 +1556,9 @@ function ejecutarDiagnostico() {
   return grupos;
 }
 
+/** Categorías OODA que la persona ya abrió/revisó en esta sesión (para el contador de progreso). */
+const categoriasOodaRevisadas = new Set();
+
 function renderAsistente() {
   const cont = document.getElementById('asistenteContenido');
   const grupos = ejecutarDiagnostico();
@@ -1531,8 +1578,16 @@ function renderAsistente() {
   });
   const prioridad = gruposOrdenados[0];
 
+  // --- Resumen ejecutivo de una frase — para no tener que armarlo mentalmente
+  // leyendo las 4 tarjetas OODA de abajo.
+  let html = `<p class="asistente-resumen-frase">
+    Encontré <b>${totalItems} hallazgo(s)</b> en <b>${grupos.length} categoría(s)</b> —
+    ${criticos ? `<b>${criticos} crítico(s)</b>, ` : ''}lo más urgente es
+    <b>"${escapeHtml(prioridad.titulo)}"</b> (${prioridad.items.length} caso(s)).
+  </p>`;
+
   // --- Franja OODA: Observar / Orientar / Decidir / Actuar --------------------
-  let html = `<div class="franja-ooda">
+  html += `<div class="franja-ooda">
     <div class="ooda-paso">
       <span class="ooda-etiqueta">👁 Observar</span>
       <span class="ooda-valor">${totalItems} hallazgo(s)</span>
@@ -1548,17 +1603,18 @@ function renderAsistente() {
       <span class="ooda-valor">${escapeHtml(prioridad.titulo)}</span>
       <span class="ooda-detalle">${prioridad.items.length} caso(s) — empieza por aquí</span>
     </div>
-    <div class="ooda-paso">
+    <div class="ooda-paso ooda-paso-actuar">
       <span class="ooda-etiqueta">⚡ Actuar</span>
-      <span class="ooda-valor">Abre una categoría</span>
-      <span class="ooda-detalle">y usa los botones de cada hallazgo</span>
+      <button type="button" class="ooda-actuar-btn" id="btnOodaActuar">Ir a "${escapeHtml(prioridad.titulo)}"</button>
+      <span class="ooda-detalle" id="oodaProgreso">${categoriasOodaRevisadas.size} de ${grupos.length} categoría(s) revisada(s)</span>
     </div>
   </div>`;
 
   gruposOrdenados.forEach((g, iGrupo) => {
     const abierta = iGrupo === 0; // solo la categoría prioritaria empieza expandida
-    html += `<div class="hallazgo-grupo">
-      <h4 class="hallazgo-grupo-toggle" data-toggle-grupo="${iGrupo}">
+    if (abierta) categoriasOodaRevisadas.add(g.titulo); // la prioritaria cuenta como revisada al abrir el asistente
+    html += `<div class="hallazgo-grupo" id="grupo-ooda-${iGrupo}">
+      <h4 class="hallazgo-grupo-toggle" data-toggle-grupo="${iGrupo}" data-titulo-grupo="${escapeHtml(g.titulo)}">
         <span>${g.icono} ${escapeHtml(g.titulo)} <span class="severidad-pill sev-${g.severidad}">${g.items.length}</span></span>
         <span class="chevron-grupo">${abierta ? '▾' : '▸'}</span>
       </h4>
@@ -1590,8 +1646,27 @@ function renderAsistente() {
       const abrir = lista.style.display === 'none';
       lista.style.display = abrir ? '' : 'none';
       chevron.textContent = abrir ? '▾' : '▸';
+      if (abrir) {
+        categoriasOodaRevisadas.add(h4.dataset.tituloGrupo);
+        const progreso = document.getElementById('oodaProgreso');
+        if (progreso) progreso.textContent = `${categoriasOodaRevisadas.size} de ${grupos.length} categoría(s) revisada(s)`;
+      }
     });
   });
+
+  // "⚡ Actuar" salta directo a la categoría prioritaria (ya viene abierta) y
+  // la resalta un momento, para que "actuar" sea un solo clic, no "adivina cuál
+  // categoría abrir".
+  const btnActuar = document.getElementById('btnOodaActuar');
+  if (btnActuar) {
+    btnActuar.addEventListener('click', () => {
+      const destino = document.getElementById('grupo-ooda-0');
+      if (!destino) return;
+      destino.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      destino.classList.add('grupo-resaltado');
+      setTimeout(() => destino.classList.remove('grupo-resaltado'), 1600);
+    });
+  }
 
   cont.querySelectorAll('.hallazgo-item').forEach(el => {
     el.addEventListener('click', (e) => {
@@ -2080,7 +2155,7 @@ function renderDona(contenedorId, segmentos, total) {
     acumulado += pct;
     return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" style="stroke:${s.color}"
       stroke-width="${grosor}" stroke-dasharray="${largo} ${circunferencia - largo}"
-      stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})"></circle>`;
+      stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(String(s.etiqueta))}: ${s.valor} (${(pct * 100).toFixed(0)}%)</title></circle>`;
   }).join('');
 
   const svg = `<svg viewBox="0 0 160 160" width="180" height="180">
@@ -2257,7 +2332,7 @@ function renderBarraApilada(contenedorId, segmentos) {
 
   const track = segmentos.filter(s => s.valor > 0).map(s => {
     const pct = (s.valor / total) * 100;
-    return `<span class="apilada-segmento" style="width:${pct}%;background:${s.color}">${pct >= 8 ? pct.toFixed(0) + '%' : ''}</span>`;
+    return `<span class="apilada-segmento" style="width:${pct}%;background:${s.color}" title="${escapeHtml(String(s.etiqueta))}: ${s.valor} (${pct.toFixed(0)}%)">${pct >= 8 ? pct.toFixed(0) + '%' : ''}</span>`;
   }).join('');
 
   const leyenda = segmentos.map(s => `
