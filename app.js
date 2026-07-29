@@ -2933,8 +2933,12 @@ function obtenerPanelesVisibles() {
   try {
     const guardados = JSON.parse(localStorage.getItem('cce_paneles_visibles'));
     if (Array.isArray(guardados)) return guardados;
-  } catch (e) { /* usa todos por defecto */ }
-  return TODOS_LOS_PANELES.slice();
+  } catch (e) { /* usa el default de abajo */ }
+  // Antes esto devolvía TODOS_LOS_PANELES (todo visible de entrada). Ahora los
+  // paneles originales del Dashboard arrancan OCULTOS por defecto — la persona
+  // los revela explícitamente marcándolos en "👁 Vistas", o pidiéndolos al
+  // asistente (que los fija como panel personalizado, siempre visible aparte).
+  return [];
 }
 
 function guardarPanelesVisibles(nombres) {
@@ -2980,39 +2984,17 @@ function configurarVistas() {
 }
 
 /**
- * Botón que oculta/muestra TODO el bloque de gráficas de una vez (el
- * panel-grid completo), dejando el Dashboard limpio con solo las tarjetas
- * KPI hasta que la persona decida ver las gráficas. Se recuerda entre
- * sesiones, y es independiente de "Solo mis paneles" (que decide CUÁLES
- * gráficas se ven; este botón decide si se ve el bloque de gráficas o no).
+ * Los paneles ORIGINALES del Dashboard arrancan ocultos por defecto (ver
+ * obtenerPanelesVisibles) — este botón simplemente abre el asistente para
+ * que la persona pida justo lo que quiere ver. Ya no existe un botón
+ * "Mostrar todas" para revelarlos de golpe; la única vía es pedirlo.
  */
 function configurarMostrarOcultarGraficas() {
   const btn = document.getElementById('btnMostrarOcultarGraficas');
-  const btnTodas = document.getElementById('btnMostrarTodasDeUnaVez');
-  const grid = document.getElementById('panelGridDashboard');
-
-  const estanVisibles = () => localStorage.getItem('cce_graficas_visibles') === '1';
-  const actualizar = () => {
-    const visible = estanVisibles();
-    grid.style.display = visible ? '' : 'none';
-    btnTodas.textContent = visible ? '🙈 Ocultar todas' : 'Mostrar todas';
-  };
-
-  // El botón principal ya NO revela los 10+ paneles de golpe — en vez de
-  // eso, abre el asistente para que la persona diga justo qué quiere ver
-  // (incluyendo rango de fechas si aplica), y solo se renderiza eso.
   btn.addEventListener('click', () => {
     document.getElementById('btnAsistente').click(); // abre el panel del asistente
     renderBuscadorGraficas();
   });
-
-  // Botón pequeño para quien de verdad quiera ver el Dashboard completo de una vez
-  btnTodas.addEventListener('click', () => {
-    localStorage.setItem('cce_graficas_visibles', estanVisibles() ? '0' : '1');
-    actualizar();
-  });
-
-  actualizar(); // aplica el estado guardado apenas arranca la app
 }
 
 /**
