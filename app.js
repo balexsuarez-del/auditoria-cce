@@ -3721,14 +3721,19 @@ async function actualizarSupervisionDesdeExcel(file) {
 
     const filas = XLSX.utils.sheet_to_json(workbook.Sheets[nombreHoja], { header: 1, raw: true, defval: '' });
     const encabezadosOriginales = (filas[0] || []).map(h => (h || '').toString().trim());
-    const idx = (patron) => encabezadosOriginales.findIndex(h => h.toLowerCase().includes(patron));
+    // Quita tildes antes de comparar, para que patrones sin acento (ej. "numero de os")
+    // sí encuentren encabezados con acento (ej. "Número de OS") — antes esto fallaba
+    // silenciosamente y la búsqueda caía a un patrón de respaldo demasiado genérico.
+    const sinTildes = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const encabezadosNormalizados = encabezadosOriginales.map(h => sinTildes(h.toLowerCase()));
+    const idx = (patron) => encabezadosNormalizados.findIndex(h => h.includes(sinTildes(patron)));
 
     const mapaColumnas = {
       'ID': idx('id'), 'Fecha Supervision': idx('fecha de supervis') !== -1 ? idx('fecha de supervis') : idx('fecha supervision'),
       'Fecha Ejecucion OS': idx('fecha de ejecuci') !== -1 ? idx('fecha de ejecuci') : idx('fecha ejecucion'),
-      'Supervisor': idx('supervisor'), 'Zona': idx('zona'),
+      'Supervisor': idx('supervisor') !== -1 ? idx('supervisor') : idx('realizada por'), 'Zona': idx('zona'),
       'Serie Medidor': idx('medidor'), 'Tipo Inspeccion': idx('inspecci'),
-      'Numero OS': idx('os') !== -1 ? idx('os') : idx('numero de os'),
+      'Numero OS': idx('numero de os'),
       'Aliado': idx('aliado'), 'Tecnico': idx('cnico'),
       'Conforme': idx('conforme'), 'Tipo Hallazgo 1': idx('tipo de hallazgo'),
       'Condicion Tecnica': idx('condici'), 'Observacion General': idx('observaci')
