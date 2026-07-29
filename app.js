@@ -597,6 +597,13 @@ function conectarBotonFijarPanel(contenedor) {
     lista.push({ id: 'custom_' + Date.now(), ...config });
     guardarPanelesPersonalizados(lista);
     renderPanelesPersonalizados();
+    // Se acaba de pedir explícitamente este panel — se muestra ya mismo, sin
+    // esperar a que además esté marcado en "Vistas" o en "Solo mis paneles".
+    const visibles = obtenerPanelesVisibles();
+    if (!visibles.includes(config.titulo)) {
+      guardarPanelesVisibles(visibles.concat([config.titulo]));
+      aplicarVisibilidadPaneles();
+    }
     btn.textContent = '✅ Fijado en el Dashboard';
     btn.disabled = true;
     mostrarToast(`"${config.titulo}" se agregó al Dashboard.`, 'success');
@@ -1952,6 +1959,7 @@ function renderDashboard() {
   }
 
   renderPanelesPersonalizados();
+  aplicarVisibilidadPaneles(); // los paneles recién reconstruidos deben respetar el estado oculto/visible actual
 }
 
 /**
@@ -2959,9 +2967,11 @@ function aplicarVisibilidadPaneles() {
   document.querySelectorAll('#view-dashboard [data-panel-nombre]').forEach(el => {
     // "Hallazgos" respeta además su propia regla (solo si hay pestaña Hallazgos) — no lo forzamos aquí.
     if (el.id === 'panelHallazgos') return;
-    // Los paneles personalizados (fijados desde "Buscar y graficar") se manejan
-    // con su propio botón 🗑, no con la lista de Vistas — siempre quedan visibles aquí.
-    if (el.classList.contains('panel-personalizado')) return;
+    // Antes los paneles personalizados (fijados desde "Buscar y graficar") quedaban
+    // SIEMPRE visibles, exentos de esta lista. Ahora se rigen por la misma regla que
+    // los originales: también arrancan ocultos por defecto, y solo se muestran si su
+    // nombre está en la lista de visibles (ver conectarBotonFijarPanel y
+    // configurarSoloMisPaneles para cómo entran a esa lista).
     el.style.display = visibles.includes(el.dataset.panelNombre) ? '' : 'none';
   });
 }
@@ -3023,14 +3033,15 @@ function configurarSoloMisPaneles() {
   btn.addEventListener('click', () => {
     if (enModoSoloMios()) {
       // Restaurar: vuelve a mostrar los paneles que estaban visibles antes de activar el modo
-      const anteriores = JSON.parse(localStorage.getItem('cce_paneles_visibles_antes_de_solo_mios') || 'null')
-        || TODOS_LOS_PANELES.slice();
-      guardarPanelesVisibles(anteriores);
+      const anteriores = JSON.parse(localStorage.getItem('cce_paneles_visibles_antes_de_solo_mios') || 'null');
+      guardarPanelesVisibles(Array.isArray(anteriores) ? anteriores : []);
       localStorage.removeItem('cce_solo_mis_paneles');
     } else {
-      // Activar: guarda cuáles estaban visibles, y oculta todos los paneles originales
+      // Activar: guarda qué estaba visible, y muestra SOLO los paneles fijados
+      // (los personalizados) — ocultando los originales. Fijarlos ya es "pedirlos"
+      // explícitamente, así que "Solo mis paneles" es la forma de revelarlos.
       localStorage.setItem('cce_paneles_visibles_antes_de_solo_mios', JSON.stringify(obtenerPanelesVisibles()));
-      guardarPanelesVisibles([]);
+      guardarPanelesVisibles(obtenerPanelesPersonalizados().map(p => p.titulo));
       localStorage.setItem('cce_solo_mis_paneles', '1');
 
       if (!obtenerPanelesPersonalizados().length) {
@@ -3044,16 +3055,27 @@ function configurarSoloMisPaneles() {
   actualizarTextoBoton(); // deja el texto correcto si ya estaba activado desde antes
 }
 
+/** Nombres de los paneles que el usuario ha fijado desde el asistente ("📌 Fijar en el Dashboard"). */
+function obtenerNombresPanelesPersonalizados() {
+  return obtenerPanelesPersonalizados().map(p => p.titulo);
+}
+
+/** Todo lo que se puede elegir mostrar/ocultar: los paneles originales + los que el usuario fijó. */
+function obtenerUniversoPaneles() {
+  return TODOS_LOS_PANELES.concat(obtenerNombresPanelesPersonalizados());
+}
+
 function obtenerOrdenPaneles() {
+  const universo = obtenerUniversoPaneles();
   try {
     const guardado = JSON.parse(localStorage.getItem('cce_orden_paneles'));
     if (Array.isArray(guardado) && guardado.length) {
-      // Si se agregó un panel nuevo después de guardar el orden, se añade al final
-      const faltantes = TODOS_LOS_PANELES.filter(n => !guardado.includes(n));
-      return [...guardado.filter(n => TODOS_LOS_PANELES.includes(n)), ...faltantes];
+      // Si se agregó un panel nuevo (original o fijado) después de guardar el orden, se añade al final
+      const faltantes = universo.filter(n => !guardado.includes(n));
+      return [...guardado.filter(n => universo.includes(n)), ...faltantes];
     }
   } catch (e) { /* usa el orden por defecto */ }
-  return TODOS_LOS_PANELES.slice();
+  return universo.slice();
 }
 function guardarOrdenPaneles(orden) {
   localStorage.setItem('cce_orden_paneles', JSON.stringify(orden));
@@ -3083,9 +3105,10 @@ function pintarListaPaneles() {
   const cont = document.getElementById('listaPanelesVista');
   const visibles = obtenerPanelesVisibles();
   const orden = obtenerOrdenPaneles();
+  const nombresFijados = new Set(obtenerNombresPanelesPersonalizados());
   cont.innerHTML = orden.map((nombre, i) => `
     <div class="fila-panel-vista">
-      <label><input type="checkbox" value="${escapeHtml(nombre)}" ${visibles.includes(nombre) ? 'checked' : ''}> ${escapeHtml(nombre)}</label>
+      <label><input type="checkbox" value="${escapeHtml(nombre)}" ${visibles.includes(nombre) ? 'checked' : ''}> ${escapeHtml(nombre)}${nombresFijados.has(nombre) ? ' <span class="badge-personalizado">fijado</span>' : ''}</label>
       <div class="botones-orden">
         <button type="button" class="btn-orden" data-mover="${escapeHtml(nombre)}" data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Subir">▲</button>
         <button type="button" class="btn-orden" data-mover="${escapeHtml(nombre)}" data-dir="1" ${i === orden.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>
@@ -3132,7 +3155,7 @@ function cargarVista(slot) {
   const vista = vistas[slot];
   if (!vista) { mostrarToast(`La Vista ${slot} todavía está vacía.`, 'error'); return; }
 
-  guardarPanelesVisibles(vista.paneles || TODOS_LOS_PANELES.slice());
+  guardarPanelesVisibles(vista.paneles || []);
   if (vista.orden) guardarOrdenPaneles(vista.orden);
   Object.keys(vista.tipos || {}).forEach(target => localStorage.setItem('cce_vista_' + target, vista.tipos[target]));
   if (vista.columnas) guardarColumnasVisibles(vista.columnas);
