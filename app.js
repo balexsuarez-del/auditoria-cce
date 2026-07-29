@@ -320,7 +320,7 @@ const GRAFICAS_PERSONALIZABLES = [
   { target: 'chartFactor', nombre: 'Concordancia Factor Acta vs Real', nombrePanel: 'Concordancia Factor', opciones: ['barras', 'dona', 'apilada'] },
   { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', nombrePanel: 'Hallazgos por aliado', opciones: ['barras', 'dona'] }
 ];
-const NOMBRE_TIPO_GRAFICA = { barras: '📊 Barras', dona: '🍩 Dona', apilada: '▬ Apilada' };
+const NOMBRE_TIPO_GRAFICA = { barras: '📊 Barras', dona: '🍩 Dona', apilada: '▬ Apilada', linea: '📈 Línea', cascada: '🪜 Cascada' };
 
 /** Cuántas categorías tiene ahora mismo cada gráfica (para poder recomendar el tipo). */
 function calcularNumCategorias(target) {
@@ -691,10 +691,61 @@ function dibujarTipoGrafica(idContenedor, datos, tipo) {
   const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
   if (tipo === 'dona') renderDona(idContenedor, coloreados);
   else if (tipo === 'apilada') renderBarraApilada(idContenedor, coloreados);
+  else if (tipo === 'linea') renderLineaGenerica(idContenedor, datos);
+  else if (tipo === 'cascada') renderCascada(idContenedor, datos);
   else {
     const max = Math.max(...datos.map(d => d.valor), 1);
     renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) })), max);
   }
+}
+
+/** Línea genérica para cualquier arreglo {etiqueta, valor} (no requiere formato de fecha). */
+function renderLineaGenerica(contenedorId, datos) {
+  const cont = document.getElementById(contenedorId);
+  if (!datos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+  const w = 340, h = 180, padding = 34;
+  const max = Math.max(...datos.map(d => d.valor), 1);
+  const paso = datos.length > 1 ? (w - padding * 2) / (datos.length - 1) : 0;
+  const coords = datos.map((d, i) => ({
+    x: padding + i * paso,
+    y: h - padding - (d.valor / max) * (h - padding * 2),
+    d
+  }));
+  const linea = coords.map(c => `${c.x},${c.y}`).join(' ');
+  const area = `${padding},${h - padding} ${linea} ${coords[coords.length - 1].x},${h - padding}`;
+  const puntos = coords.map(c => `
+    <circle cx="${c.x}" cy="${c.y}" r="4" fill="var(--purple-500)"></circle>
+    <text x="${c.x}" y="${c.y - 10}" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-700)">${c.d.valor}</text>
+    <text x="${c.x}" y="${h - 10}" text-anchor="middle" font-size="8.5" fill="var(--ink-500)">${escapeHtml(String(c.d.etiqueta)).slice(0, 8)}</text>
+  `).join('');
+  cont.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" preserveAspectRatio="xMidYMid meet">
+    <polygon points="${area}" fill="var(--purple-100)"></polygon>
+    <polyline points="${linea}" fill="none" stroke="var(--purple-500)" stroke-width="2.5"></polyline>
+    ${puntos}
+  </svg>`;
+}
+
+/** Cascada (waterfall): muestra cómo cada categoría suma hasta el total acumulado. */
+function renderCascada(contenedorId, datos) {
+  const cont = document.getElementById(contenedorId);
+  if (!datos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+  const w = 340, h = 180, padding = 30;
+  const total = datos.reduce((s, d) => s + d.valor, 0) || 1;
+  const anchoBarra = (w - padding * 2) / datos.length;
+  let acumulado = 0, svg = '';
+  datos.forEach((d, i) => {
+    const yInicio = h - padding - (acumulado / total) * (h - padding * 2);
+    acumulado += d.valor;
+    const yFin = h - padding - (acumulado / total) * (h - padding * 2);
+    const x = padding + i * anchoBarra;
+    const alto = Math.max(yInicio - yFin, 1);
+    const color = PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length];
+    svg += `<rect x="${x + 3}" y="${yFin}" width="${anchoBarra - 6}" height="${alto}" fill="${color}" rx="2"></rect>
+      <text x="${x + anchoBarra / 2}" y="${yFin - 6}" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-700)">${d.valor}</text>
+      <text x="${x + anchoBarra / 2}" y="${h - 8}" text-anchor="middle" font-size="8" fill="var(--ink-500)">${escapeHtml(String(d.etiqueta)).slice(0, 8)}</text>`;
+  });
+  cont.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" preserveAspectRatio="xMidYMid meet">${svg}</svg>
+    <p style="font-size:10px;color:var(--ink-500);text-align:center;margin:4px 0 0;">Total acumulado: ${total}</p>`;
 }
 
 function renderizarSegunRecomendacion(idContenedor, datos) {
@@ -705,12 +756,13 @@ function renderizarSegunRecomendacion(idContenedor, datos) {
 
 /**
  * Igual que renderizarSegunRecomendacion, pero además dibuja un selector de
- * tipo de gráfica (Barras / Dona / Apilada) para que la persona elija con
- * cuál quiere ver justo ese resultado, en vez de aceptar solo lo recomendado.
+ * tipo de gráfica (Barras / Dona / Apilada / Línea / Cascada) para que la
+ * persona elija con cuál quiere ver justo ese resultado, en vez de aceptar
+ * solo lo recomendado.
  */
 function renderizarConSelectorTipo(idPicker, idContenedor, datos) {
   const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
-  const opciones = ['barras', 'dona', 'apilada'];
+  const opciones = ['barras', 'dona', 'apilada', 'linea', 'cascada'];
 
   document.getElementById(idPicker).innerHTML = opciones.map(op => `
     <button type="button" class="btn-opcion-grafica ${op === rec.tipo ? 'is-active' : ''}"
