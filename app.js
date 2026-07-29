@@ -422,12 +422,15 @@ const CAMPOS_GRAFICABLES = [
   { claves: ['revisado'], campo: 'revisado' },
   { claves: ['score', 'puntaje'], campo: 'Score', esNumerico: true }
 ];
-// Campos por los que se puede "agrupar" (para cruces tipo "no conformidad por aliado")
+// Campos por los que se puede "agrupar" (para cruces tipo "no conformidad por aliado").
+// El campo temporal (esTemporal) es especial: en vez de contar por valor exacto de
+// fecha, agrupa por mes (YYYY-MM) para mostrar una tendencia en el tiempo.
 const CAMPOS_AGRUPABLES = [
   { claves: ['aliado'], campo: 'Aliado' },
   { claves: ['ciudad'], campo: 'Ciudad' },
   { claves: ['tecnico', 'técnico'], campo: 'Técnico' },
-  { claves: ['tipo medida', 'tipo de medida'], campo: 'Tipo Medida' }
+  { claves: ['tipo medida', 'tipo de medida'], campo: 'Tipo Medida' },
+  { claves: ['mes', 'mensual', 'fecha', 'tendencia', 'evolucion', 'evolución'], campo: 'Fecha', esTemporal: true }
 ];
 // Estados/condiciones reconocidos para filtrar antes de agrupar
 const ESTADOS_RECONOCIDOS = [
@@ -473,7 +476,7 @@ function buscarCampoGraficable(texto) {
   return CAMPOS_GRAFICABLES.find(c => c.claves.some(k => q.includes(k)));
 }
 
-/** Cuenta cuántas actas caen en cada valor distinto de un campo categórico. */
+/** Cuenta cuántas actas hay por cada valor distinto de un campo categórico. */
 function agregarPorCategoria(campo, actas) {
   const conteo = {};
   (actas || state.actas).forEach(a => {
@@ -481,6 +484,55 @@ function agregarPorCategoria(campo, actas) {
     conteo[v] = (conteo[v] || 0) + 1;
   });
   return Object.keys(conteo).map(k => ({ etiqueta: k, valor: conteo[k] })).sort((a, b) => b.valor - a.valor);
+}
+
+const NOMBRES_MES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+/**
+ * Agrupa registros por mes (YYYY-MM) usando el campo de fecha indicado, para
+ * consultas de tendencia/evolución ("actas por mes", "score por mes",
+ * "no conformidad por mes"). A diferencia de agregarPorCategoria, el orden
+ * queda CRONOLÓGICO (no por cantidad), porque en una tendencia el orden
+ * en el tiempo es lo que importa. Si se pasa campoNumerico, en vez de
+ * contar registros calcula el promedio de ese campo por mes.
+ */
+function agregarPorMes(actas, campoFecha, campoNumerico) {
+  const grupos = {};
+  (actas || []).forEach(a => {
+    const f = (a[campoFecha] || '').toString().slice(0, 7); // YYYY-MM
+    if (!/^\d{4}-\d{2}$/.test(f)) return;
+    (grupos[f] = grupos[f] || []).push(a);
+  });
+  const claves = Object.keys(grupos).sort(); // orden cronológico ascendente
+  return claves.map(clave => {
+    const [anio, mes] = clave.split('-');
+    const etiqueta = `${NOMBRES_MES_CORTO[parseInt(mes, 10) - 1]} ${anio}`;
+    if (campoNumerico) {
+      const valores = grupos[clave].map(a => parseFloat(a[campoNumerico])).filter(v => !isNaN(v));
+      const valor = valores.length ? Math.round((valores.reduce((s, v) => s + v, 0) / valores.length) * 10) / 10 : 0;
+      return { etiqueta, valor };
+    }
+    return { etiqueta, valor: grupos[clave].length };
+  });
+}
+
+/**
+ * Promedia un campo numérico (ej. Score) agrupando por un campo categórico
+ * (ej. Aliado) — para consultas tipo "score promedio por aliado" o
+ * "comparar score por técnico", que son distintas de solo contar cuántas
+ * actas tiene cada uno.
+ */
+function promedioPorCategoria(campoCategoria, campoNumerico, actas) {
+  const grupos = {};
+  (actas || state.actas).forEach(a => {
+    const cat = (a[campoCategoria] || '').toString().trim() || 'Sin dato';
+    const v = parseFloat(a[campoNumerico]);
+    if (isNaN(v)) return;
+    (grupos[cat] = grupos[cat] || []).push(v);
+  });
+  return Object.keys(grupos)
+    .map(cat => ({ etiqueta: cat, valor: Math.round((grupos[cat].reduce((s, v) => s + v, 0) / grupos[cat].length) * 10) / 10 }))
+    .sort((a, b) => b.valor - a.valor);
 }
 
 /**
@@ -556,8 +608,14 @@ function calcularDatosPanelPersonalizado(config) {
   if (config.tipo === 'topFallas') return calcularTopFallas(10);
   if (config.tipo === 'cruce') {
     const filtradas = state.actas.filter(a => (a[config.estadoCampo] || '').toString().toUpperCase() === config.estadoValor);
+    if (config.esTemporal) return agregarPorMes(filtradas, config.agrupableCampo);
     return agregarPorCategoria(config.agrupableCampo, filtradas);
   }
+  if (config.tipo === 'promedio') {
+    if (config.esTemporal) return agregarPorMes(state.actas, config.agrupableCampo, config.campoNumerico);
+    return promedioPorCategoria(config.agrupableCampo, config.campoNumerico, state.actas);
+  }
+  if (config.tipo === 'tendencia') return agregarPorMes(state.actas, config.agrupableCampo);
   if (config.tipo === 'formulario') {
     let fuente = state.supervisionDetalle || [];
     if (config.tipoMedida) fuente = filtrarPorTipoMedidaCruzado(fuente, 'Serie Medidor', config.tipoMedida);
@@ -611,8 +669,113 @@ function renderPanelesPersonalizados() {
  *  Cada una está probada para que dispare una rama específica y válida del motor. */
 const SUGERENCIAS_GUIADAS = [
   'Supervisión Manual', 'No conformidad por aliado', 'Top de fallas más comunes',
-  'Tipo Medida', 'Score', 'Formulario conforme por aliado'
+  'Score por aliado', 'No conformidad por mes', 'Formulario conforme por aliado'
 ];
+
+/** Nombres más amigables para mostrarle al usuario en el catálogo de ayuda
+ *  (el campo real de la hoja puede ser más técnico, ej. "Acuerdo T=U"). */
+const NOMBRE_AMIGABLE_CAMPO = {
+  'Supervisión Manual (T)': 'Supervisión Manual',
+  'Supervisión IA (U)': 'Supervisión IA',
+  'Acuerdo T=U': 'Acuerdo IA vs Manual',
+  'revisado': 'Revisado',
+  'Fecha': 'Mes' // cuando "Fecha" aparece como campo agrupable, es la dimensión temporal (tendencia mensual)
+};
+const nombreAmigable = (campo) => NOMBRE_AMIGABLE_CAMPO[campo] || campo;
+
+/**
+ * Arma el HTML del catálogo de "¿qué puedo mostrarte?" leyendo directamente
+ * de los mismos catálogos que usa el motor de búsqueda (CAMPOS_GRAFICABLES,
+ * CAMPOS_AGRUPABLES, ESTADOS_RECONOCIDOS, CAMPOS_SUPERVISION), para que la
+ * ayuda nunca quede desactualizada si esos catálogos cambian.
+ * Cada opción es un chip clicable que llena el buscador y ejecuta la consulta.
+ */
+function generarPanelAyudaConsultas() {
+  const chip = (texto) => `<button type="button" class="btn-opcion-grafica btn-sugerencia-guiada" data-consulta="${escapeHtml(texto)}">${escapeHtml(texto)}</button>`;
+
+  const chipsCampos = CAMPOS_GRAFICABLES.map(c => chip(nombreAmigable(c.campo))).join('');
+
+  // Campos "para agrupar" que no son la dimensión temporal (esos van en su propio bloque).
+  const agrupablesCategoricos = CAMPOS_AGRUPABLES.filter(c => !c.esTemporal);
+
+  // Cruces = un estado (no conformidad, conforme, pendiente, desacuerdo) "por" un campo agrupable.
+  // Se genera solo un ejemplo representativo por estado para no saturar de chips;
+  // el usuario puede combinar cualquier estado con cualquier campo agrupable escribiéndolo.
+  const chipsCruces = ESTADOS_RECONOCIDOS.map(estado => {
+    const campoEjemplo = agrupablesCategoricos[0];
+    return chip(`${estado.claves[0]} por ${campoEjemplo.claves[0]}`);
+  }).join('');
+  const listaAgrupables = agrupablesCategoricos.map(c => nombreAmigable(c.campo)).join(', ');
+
+  const chipsFormulario = CAMPOS_SUPERVISION.map(c => chip(`formulario ${c.claves[0]}`)).join('');
+
+  // Promedio numérico (ej. Score) por cada campo agrupable categórico.
+  const camposNumericos = CAMPOS_GRAFICABLES.filter(c => c.esNumerico);
+  const chipsPromedio = camposNumericos.flatMap(num =>
+    agrupablesCategoricos.map(agr => chip(`${num.claves[0]} por ${agr.claves[0]}`))
+  ).join('');
+
+  // Tendencia en el tiempo: conteo o promedio numérico agrupado por mes.
+  const chipsTendencia = [
+    chip('Actas por mes'),
+    ...ESTADOS_RECONOCIDOS.map(e => chip(`${e.claves[0]} por mes`)),
+    ...camposNumericos.map(n => chip(`${n.claves[0]} por mes`))
+  ].join('');
+
+  return `
+    <div class="ayuda-consultas-panel">
+      <div class="ayuda-consultas-bloque">
+        <strong>📊 Campos de "Datos completos"</strong>
+        <p>Cuenta cuántas actas hay por cada valor de este campo.</p>
+        <div class="preferencia-opciones">${chipsCampos}</div>
+      </div>
+      <div class="ayuda-consultas-bloque">
+        <strong>🔀 Comparaciones (cruces)</strong>
+        <p>Formato: <em>&lt;estado&gt; por &lt;campo&gt;</em>. Estados disponibles:
+        no conformidad, conforme, pendiente, desacuerdo. Campos para agrupar: ${escapeHtml(listaAgrupables)}.
+        Ejemplos (toca uno o combínalos a tu gusto):</p>
+        <div class="preferencia-opciones">${chipsCruces}</div>
+      </div>
+      <div class="ayuda-consultas-bloque">
+        <strong>🧮 Promedios numéricos</strong>
+        <p>Formato: <em>&lt;campo numérico&gt; por &lt;campo&gt;</em> — en vez de contar actas, promedia el valor
+        (ej. el Score promedio de cada aliado, no cuántas actas tiene):</p>
+        <div class="preferencia-opciones">${chipsPromedio}</div>
+      </div>
+      <div class="ayuda-consultas-bloque">
+        <strong>📈 Tendencia en el tiempo</strong>
+        <p>Agrega "por mes", "tendencia" o "evolución" a cualquier consulta para verla mes a mes en vez de por categoría:</p>
+        <div class="preferencia-opciones">${chipsTendencia}</div>
+      </div>
+      <div class="ayuda-consultas-bloque">
+        <strong>🏆 Ranking</strong>
+        <p>Top de fallas más comunes en todas las actas cargadas.</p>
+        <div class="preferencia-opciones">${chip('Top de fallas más comunes')}</div>
+      </div>
+      <div class="ayuda-consultas-bloque">
+        <strong>📝 Formulario de Supervisión</strong>
+        <p>Agrega la palabra "formulario" para consultar los 672 registros del formulario completo (distinto de "Datos completos"):</p>
+        <div class="preferencia-opciones">${chipsFormulario}</div>
+      </div>
+
+    </div>
+  `;
+}
+
+/** Conecta el clic de cualquier chip ".btn-sugerencia-guiada" dentro de un contenedor
+ *  dado: llena el input del buscador con su consulta y la ejecuta de una vez.
+ *  Se usa tanto para los chips iniciales como para los que aparecen luego dentro
+ *  del panel de ayuda "¿Qué puedo mostrarte?" (que se inyecta en otro momento). */
+function conectarChipsGuiados(contenedor) {
+  contenedor.querySelectorAll('.btn-sugerencia-guiada').forEach(btn => {
+    if (btn.dataset.conectado) return; // evita duplicar el listener si ya se conectó antes
+    btn.dataset.conectado = '1';
+    btn.addEventListener('click', () => {
+      document.getElementById('inputBuscadorGraficas').value = btn.dataset.consulta;
+      ejecutarBusquedaGrafica(btn.dataset.consulta);
+    });
+  });
+}
 
 /** El sub-panel donde escribes lo que quieres ver y el asistente lo busca y grafica/tabula solo. */
 function renderBuscadorGraficas() {
@@ -626,8 +789,10 @@ function renderBuscadorGraficas() {
     <div class="preferencia-opciones" style="margin-bottom:12px;">
       ${SUGERENCIAS_GUIADAS.map(s => `<button type="button" class="btn-opcion-grafica btn-sugerencia-guiada" data-consulta="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
     </div>
+    <button type="button" class="btn btn-ghost btn-icon" id="btnAyudaConsultas" style="margin-bottom:12px;">❓ ¿Qué puedo mostrarte o comparar?</button>
+    <div id="ayudaConsultasPanel" style="display:none;"></div>
     <form id="formBuscadorGraficas" class="asistente-pregunta" style="padding:0 0 8px;">
-      <input type="text" id="inputBuscadorGraficas" placeholder="O escribe la tuya: formulario hallazgo 1, no conformidad por aliado…">
+      <input type="text" id="inputBuscadorGraficas" placeholder="O escribe la tuya: score por aliado, no conformidad por mes, formulario hallazgo 1…">
       <button type="submit" class="btn btn-primary btn-icon">Buscar</button>
     </form>
     <div class="asistente-pregunta" style="padding:0 0 14px;">
@@ -646,12 +811,17 @@ function renderBuscadorGraficas() {
     ejecutarBusquedaGrafica(texto);
   });
 
-  cont.querySelectorAll('.btn-sugerencia-guiada').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.getElementById('inputBuscadorGraficas').value = btn.dataset.consulta;
-      ejecutarBusquedaGrafica(btn.dataset.consulta);
-    });
+  document.getElementById('btnAyudaConsultas').addEventListener('click', () => {
+    const panel = document.getElementById('ayudaConsultasPanel');
+    const abrir = panel.style.display === 'none';
+    if (abrir && !panel.innerHTML) panel.innerHTML = generarPanelAyudaConsultas();
+    panel.style.display = abrir ? 'block' : 'none';
+    document.getElementById('btnAyudaConsultas').textContent = abrir
+      ? '❓ Ocultar opciones' : '❓ ¿Qué puedo mostrarte o comparar?';
+    if (abrir) conectarChipsGuiados(panel);
   });
+
+  conectarChipsGuiados(cont);
 
   document.getElementById('btnLimpiarFechaGlobal').addEventListener('click', () => {
     document.getElementById('fechaGlobalDesde').value = '';
@@ -913,29 +1083,79 @@ function ejecutarBusquedaGrafica(texto) {
     return;
   }
 
-  // 3) Cruce "<estado> por <campo>" — ej. "no conformidad por aliado", "desacuerdos por técnico"
+  // 3) Cruce "<estado> por <campo>" — ej. "no conformidad por aliado", "desacuerdos por técnico".
+  // Si el campo para agrupar es temporal (mes/fecha/tendencia/evolución), en vez de contar por
+  // categoría se agrupa cronológicamente por mes — para pedidos como "no conformidad por mes".
   const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
   const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
   if (estadoInfo && agrupableInfo && q.includes('por')) {
     const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
     const filtradas = actasEnRango.filter(a => (a[estadoInfo.campo] || '').toString().toUpperCase() === estadoInfo.valor);
-    const datos = agregarPorCategoria(agrupableInfo.campo, filtradas);
+    const nombreEje = agrupableInfo.esTemporal ? 'mes' : agrupableInfo.campo;
+    const datos = agrupableInfo.esTemporal ? agregarPorMes(filtradas, agrupableInfo.campo) : agregarPorCategoria(agrupableInfo.campo, filtradas);
     if (!datos.length) {
-      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No hay actas en "${estadoInfo.valor}" para agrupar por ${escapeHtml(agrupableInfo.campo)}.</div>`;
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🎉</span>No hay actas en "${estadoInfo.valor}" para agrupar por ${escapeHtml(nombreEje)}.</div>`;
       return;
     }
     resultadoCont.innerHTML = `<div class="hallazgo-grupo">
-      <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(agrupableInfo.campo)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
+      <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(nombreEje)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, titulo: `${estadoInfo.valor} por ${agrupableInfo.campo}` })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo: `${estadoInfo.valor} por ${nombreEje}` })}'>📌 Fijar en el Dashboard</button>
     </div>`;
-    if (pideTabla) renderizarComoTabla(idContenedor, datos, agrupableInfo.campo);
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, nombreEje);
     else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
 
+  // 3.5) Comparar un CAMPO NUMÉRICO (ej. Score) promediado por categoría o por mes —
+  // ej. "score por aliado", "score promedio por técnico", "comparar score por mes".
+  // Es distinto del cruce anterior: en vez de contar cuántas actas hay, promedia el valor.
+  const campoNumericoInfo = CAMPOS_GRAFICABLES.find(c => c.esNumerico && c.claves.some(k => q.includes(k)));
+  if (campoNumericoInfo && agrupableInfo && q.includes('por')) {
+    const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
+    const nombreEje = agrupableInfo.esTemporal ? 'mes' : agrupableInfo.campo;
+    const datos = agrupableInfo.esTemporal
+      ? agregarPorMes(actasEnRango, agrupableInfo.campo, campoNumericoInfo.campo)
+      : promedioPorCategoria(agrupableInfo.campo, campoNumericoInfo.campo, actasEnRango);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>No hay datos de "${escapeHtml(campoNumericoInfo.campo)}" para promediar por ${escapeHtml(nombreEje)}.</div>`;
+      return;
+    }
+    const titulo = `${campoNumericoInfo.campo} promedio por ${nombreEje}`;
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>${escapeHtml(titulo)}</h4>
+      <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'promedio', campoNumerico: campoNumericoInfo.campo, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo })}'>📌 Fijar en el Dashboard</button>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, nombreEje);
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
+    conectarBotonFijarPanel(resultadoCont);
+    return;
+  }
+
+  // 3.6) Tendencia general en el tiempo sin campo numérico ni estado — ej. "actas por mes",
+  // "tendencia mensual", "evolución de actas" — cuenta actas por mes.
+  if (agrupableInfo && agrupableInfo.esTemporal && !estadoInfo && !campoNumericoInfo) {
+    const actasEnRango = aplicarRangoFechaGlobal(state.actas, 'Fecha');
+    const datos = agregarPorMes(actasEnRango, agrupableInfo.campo);
+    if (!datos.length) {
+      resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">📭</span>No hay fechas válidas para armar la tendencia.</div>`;
+      return;
+    }
+    resultadoCont.innerHTML = `<div class="hallazgo-grupo">
+      <h4>Actas por mes <span class="severidad-pill sev-baja">${actasEnRango.length}</span></h4>
+      <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
+      <div id="${idContenedor}" class="chart-svg-wrap"></div>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'tendencia', agrupableCampo: agrupableInfo.campo, titulo: 'Actas por mes' })}'>📌 Fijar en el Dashboard</button>
+    </div>`;
+    if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Mes');
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
+    conectarBotonFijarPanel(resultadoCont);
+    return;
+  }
 
   // 4) Campo simple (comportamiento original: aliado, ciudad, score, etc.)
   const campoInfo = buscarCampoGraficable(texto);
@@ -943,7 +1163,8 @@ function ejecutarBusquedaGrafica(texto) {
     resultadoCont.innerHTML = `<div class="asistente-vacio"><span class="emoji">🤔</span>
       No reconozco "${escapeHtml(texto)}". Prueba con: aliado, ciudad, tipo medida, técnico,
       supervisión manual, supervisión IA, acuerdo, tipo de acta, revisado, score, "top de fallas",
-      o cruces como "no conformidad por aliado".</div>`;
+      cruces como "no conformidad por aliado", promedios como "score por aliado", o tendencias
+      como "no conformidad por mes" / "actas por mes". Toca "❓ ¿Qué puedo mostrarte?" para ver todas las opciones.</div>`;
     return;
   }
 
@@ -1237,6 +1458,37 @@ function ejecutarDiagnostico() {
       const [aliado, campo] = clave.split('|');
       return { id: arr[0]['#'], texto: `${aliado} — ${campo} fallando ${arr.length} veces`,
         detalle: `Actas # ${arr.map(a => a['#']).join(', ')}` };
+    })
+  });
+
+  // Patrón repetido por TÉCNICO individual: mismo técnico con el mismo tipo de
+  // falla 3+ veces, sin importar el aliado. Esto complementa el patrón por
+  // aliado — un técnico puede repetir un error aunque su aliado en general
+  // esté bien, o puede repartirse entre varios aliados si es subcontratado.
+  const patronesPorTecnico = {};
+  state.actas.forEach(a => {
+    const tecnico = (a['Técnico'] || '').toString().trim();
+    if (!tecnico) return;
+    ['R01 Tensión', 'R03 Formato'].forEach(campo => {
+      const v = (a[campo] || '').toString().toUpperCase();
+      if (v && v !== 'OK' && v !== 'PENDIENTE') {
+        const clave = tecnico + '|' + campo;
+        (patronesPorTecnico[clave] = patronesPorTecnico[clave] || []).push(a);
+      }
+    });
+  });
+  const patronesFrecuentesTecnico = Object.entries(patronesPorTecnico).filter(([, arr]) => arr.length >= 3);
+  if (patronesFrecuentesTecnico.length) grupos.push({
+    titulo: 'Fallas repetidas por técnico — candidato a capacitación individual', icono: '👷', severidad: 'media',
+    items: patronesFrecuentesTecnico.map(([clave, arr]) => {
+      const [tecnico, campo] = clave.split('|');
+      const aliadosInvolucrados = [...new Set(arr.map(a => a['Aliado']).filter(Boolean))];
+      return {
+        id: arr[0]['#'],
+        texto: `${tecnico} — ${campo} fallando ${arr.length} veces`,
+        detalle: `Actas # ${arr.map(a => a['#']).join(', ')} · Aliado(s): ${aliadosInvolucrados.join(', ') || 'sin dato'}`,
+        notaAliado: `Se detectó que el técnico ${tecnico}${aliadosInvolucrados.length ? ' (' + aliadosInvolucrados.join(', ') + ')' : ''} repitió la falla "${campo}" en ${arr.length} actas (# ${arr.map(a => a['#']).join(', ')}). Se recomienda reforzar capacitación puntual con este técnico en este criterio antes de la próxima ronda de instalaciones.`
+      };
     })
   });
 

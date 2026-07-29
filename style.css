@@ -651,6 +651,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .btn-opcion-grafica:hover { background: var(--purple-100); border-color: var(--purple-500); }
 .btn-opcion-grafica.is-active { background: var(--purple-500); border-color: var(--purple-500); color: white; }
 
+.ayuda-consultas-panel {
+  background: var(--purple-50, #f6f1fb); border: 1px solid var(--purple-100);
+  border-radius: 10px; padding: 14px; margin-bottom: 14px;
+}
+.ayuda-consultas-bloque { margin-bottom: 14px; }
+.ayuda-consultas-bloque:last-child { margin-bottom: 0; }
+.ayuda-consultas-bloque strong { display: block; font-size: 13px; color: var(--ink-900); margin-bottom: 2px; }
+.ayuda-consultas-bloque p { font-size: 12px; color: var(--ink-500); margin: 0 0 8px; }
+
 .asistente-vacio { text-align: center; padding: 40px 10px; color: var(--ink-500); }
 .asistente-vacio .emoji { font-size: 40px; display: block; margin-bottom: 10px; }
 
