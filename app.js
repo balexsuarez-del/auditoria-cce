@@ -1214,8 +1214,17 @@ function ejecutarBusquedaGrafica(texto) {
 function configurarArrastreBoton(btn) {
   const posGuardada = JSON.parse(localStorage.getItem('cce_asistente_pos') || 'null');
   if (posGuardada) {
-    btn.style.left = posGuardada.left + 'px';
-    btn.style.top = posGuardada.top + 'px';
+    // Bug corregido: antes se aplicaba la posición guardada tal cual, sin
+    // verificar que siga cabiendo en la pantalla ACTUAL. Si se arrastró el
+    // botón en una pantalla ancha (ej. computador) y luego se abre la app en
+    // una más angosta (ej. celular, o una ventana más chica), el botón
+    // quedaba posicionado fuera del área visible — invisible, sin forma de
+    // recuperarlo salvo borrando localStorage. Ahora se recorta (clamp) igual
+    // que durante el arrastre, para que siempre quede dentro de la pantalla.
+    const left = Math.max(4, Math.min(window.innerWidth - 58 - 4, posGuardada.left));
+    const top = Math.max(4, Math.min(window.innerHeight - 58 - 4, posGuardada.top));
+    btn.style.left = left + 'px';
+    btn.style.top = top + 'px';
     btn.style.right = 'auto';
     btn.style.bottom = 'auto';
   }
