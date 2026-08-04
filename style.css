@@ -278,6 +278,15 @@ body {
 }
 .panel h3::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--purple-500); flex-shrink: 0; }
 
+.btn-cerrar-panel-individual {
+  margin-left: auto; width: 18px; height: 18px; border-radius: 50%;
+  border: none; background: transparent; color: var(--ink-500);
+  font-size: 12px; line-height: 1; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-cerrar-panel-individual:hover { background: var(--red-100); color: var(--red-600); }
+
 
 .bar-row { display: grid; grid-template-columns: 14px 140px 1fr 50px; align-items: center; gap: 10px; margin-bottom: 12px; }
 .bar-row .bar-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--purple-500); flex-shrink: 0; }

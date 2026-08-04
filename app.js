@@ -3132,6 +3132,37 @@ function guardarPanelesVisibles(nombres) {
   localStorage.setItem('cce_paneles_visibles', JSON.stringify(nombres));
 }
 
+/**
+ * Agrega un pequeño botón "✕" al encabezado de cada panel ORIGINAL (no a los
+ * personalizados, que ya tienen su propio "🗑 Quitar") para poder ocultar
+ * ese panel puntual sin tener que usar "🧹 Limpiar" (que oculta todos) ni
+ * entrar al modal de "👁 Vistas". Es idempotente: si el botón ya existe no
+ * lo vuelve a insertar.
+ */
+function agregarBotonesCerrarPanel() {
+  document.querySelectorAll('#view-dashboard .panel[data-panel-nombre]').forEach(panel => {
+    if (panel.classList.contains('panel-personalizado')) return; // ya tienen su propio 🗑 Quitar
+    if (panel.id === 'panelHallazgos') return; // se rige por su propia regla de visibilidad
+    const h3 = panel.querySelector('h3');
+    if (!h3 || h3.querySelector('.btn-cerrar-panel-individual')) return;
+    const nombre = panel.dataset.panelNombre;
+    h3.insertAdjacentHTML('beforeend', `<button type="button" class="btn-cerrar-panel-individual" title="Ocultar este panel" data-cerrar-panel="${escapeHtml(nombre)}">✕</button>`);
+  });
+
+  // Un solo listener por delegación — funciona incluso para paneles que se
+  // vuelvan a crear después (no hace falta re-conectar cada vez).
+  if (!document.body.dataset.cerrarPanelConectado) {
+    document.body.dataset.cerrarPanelConectado = '1';
+    document.body.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-cerrar-panel-individual');
+      if (!btn) return;
+      const nombre = btn.dataset.cerrarPanel;
+      guardarPanelesVisibles(obtenerPanelesVisibles().filter(n => n !== nombre));
+      aplicarVisibilidadPaneles();
+    });
+  }
+}
+
 function aplicarVisibilidadPaneles() {
   const visibles = obtenerPanelesVisibles();
   document.querySelectorAll('#view-dashboard [data-panel-nombre]').forEach(el => {
@@ -3144,6 +3175,7 @@ function aplicarVisibilidadPaneles() {
     // configurarSoloMisPaneles para cómo entran a esa lista).
     el.style.display = visibles.includes(el.dataset.panelNombre) ? '' : 'none';
   });
+  agregarBotonesCerrarPanel();
 }
 
 function configurarVistas() {
