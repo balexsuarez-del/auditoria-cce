@@ -158,15 +158,36 @@
           <div id="chartDona" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Tendencia de actas por mes">
-          <h3>Tendencia de actas por mes (línea)</h3>
+          <div class="panel-header-row">
+            <h3>Tendencia de actas por mes</h3>
+            <select class="select-compact selector-vista" data-target="chartLinea">
+              <option value="linea">Línea</option>
+              <option value="barras">Barras</option>
+              <option value="cascada">Cascada</option>
+            </select>
+          </div>
           <div id="chartLinea" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Score promedio por mes (área)">
-          <h3>Score promedio por mes (área)</h3>
+          <div class="panel-header-row">
+            <h3>Score promedio por mes</h3>
+            <select class="select-compact selector-vista" data-target="chartArea">
+              <option value="linea">Línea</option>
+              <option value="barras">Barras</option>
+              <option value="cascada">Cascada</option>
+            </select>
+          </div>
           <div id="chartArea" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Distribución de Score (histograma)">
-          <h3>Distribución de Score (histograma)</h3>
+          <div class="panel-header-row">
+            <h3>Distribución de Score</h3>
+            <select class="select-compact selector-vista" data-target="chartHistograma">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
           <div id="chartHistograma" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Actas por tipo de medida">
@@ -181,12 +202,26 @@
           <div id="chartApilada" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Conformidad por aliado">
-          <h3>Conformidad por aliado</h3>
-          <div id="chartAliados" class="chart-bars"></div>
+          <div class="panel-header-row">
+            <h3>Conformidad por aliado</h3>
+            <select class="select-compact selector-vista" data-target="chartAliados">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
+          <div id="chartAliados" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Score promedio por tipo de medida">
-          <h3>Score promedio por tipo de medida</h3>
-          <div id="chartTipoMedida" class="chart-bars"></div>
+          <div class="panel-header-row">
+            <h3>Score promedio por tipo de medida</h3>
+            <select class="select-compact selector-vista" data-target="chartTipoMedida">
+              <option value="barras">Barras</option>
+              <option value="dona">Dona</option>
+              <option value="apilada">Barra apilada</option>
+            </select>
+          </div>
+          <div id="chartTipoMedida" class="chart-svg-wrap"></div>
         </div>
         <div class="panel" data-panel-nombre="Acuerdo vs Desacuerdo">
           <div class="panel-header-row">

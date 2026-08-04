@@ -318,7 +318,12 @@ const GRAFICAS_PERSONALIZABLES = [
   { target: 'chartApilada', nombre: 'Actas por tipo de medida', nombrePanel: 'Actas por tipo de medida', opciones: ['apilada', 'dona', 'barras'] },
   { target: 'chartAcuerdo', nombre: 'Acuerdo vs Desacuerdo', nombrePanel: 'Acuerdo vs Desacuerdo', opciones: ['barras', 'dona', 'apilada'] },
   { target: 'chartFactor', nombre: 'Concordancia Factor Acta vs Real', nombrePanel: 'Concordancia Factor', opciones: ['barras', 'dona', 'apilada'] },
-  { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', nombrePanel: 'Hallazgos por aliado', opciones: ['barras', 'dona'] }
+  { target: 'chartHallazgos', nombre: 'Hallazgos por aliado', nombrePanel: 'Hallazgos por aliado', opciones: ['barras', 'dona'] },
+  { target: 'chartLinea', nombre: 'Tendencia de actas por mes', nombrePanel: 'Tendencia de actas por mes', opciones: ['linea', 'barras', 'cascada'] },
+  { target: 'chartArea', nombre: 'Score promedio por mes', nombrePanel: 'Score promedio por mes (área)', opciones: ['linea', 'barras', 'cascada'] },
+  { target: 'chartHistograma', nombre: 'Distribución de Score', nombrePanel: 'Distribución de Score (histograma)', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartAliados', nombre: 'Conformidad por aliado', nombrePanel: 'Conformidad por aliado', opciones: ['barras', 'dona', 'apilada'] },
+  { target: 'chartTipoMedida', nombre: 'Score promedio por tipo de medida', nombrePanel: 'Score promedio por tipo de medida', opciones: ['barras', 'dona', 'apilada'] }
 ];
 const NOMBRE_TIPO_GRAFICA = { barras: '📊 Barras', dona: '🍩 Dona', apilada: '▬ Apilada', linea: '📈 Línea', cascada: '🪜 Cascada' };
 
@@ -331,6 +336,11 @@ function calcularNumCategorias(target) {
     case 'chartAcuerdo': return 2; // Conforme / Desacuerdo
     case 'chartFactor': return 2; // Concuerda / No concuerda
     case 'chartHallazgos': return hallazgosPorAliadoFiltrados().length || 1;
+    case 'chartLinea': return calcularActasPorMes().length || 1;
+    case 'chartArea': return calcularScorePromedioPorMes().length || 1;
+    case 'chartHistograma': return 5; // 5 rangos de score fijos
+    case 'chartAliados': return (k && k.porAliado) ? k.porAliado.length : 1;
+    case 'chartTipoMedida': return (k && k.porTipoMedida) ? k.porTipoMedida.length : 1;
     default: return 3;
   }
 }
@@ -595,6 +605,12 @@ function conectarBotonFijarPanel(contenedor) {
   if (!btn) return;
   btn.addEventListener('click', () => {
     const config = JSON.parse(btn.dataset.config);
+    // Antes esto se perdía: si la persona cambiaba el tipo de gráfica en el
+    // selector (barras/dona/apilada/línea/cascada) antes de fijar, el panel
+    // fijado igual se re-dibujaba con la recomendación automática, ignorando
+    // lo que había elegido. Ahora se guarda el tipo activo en ese momento.
+    const botonActivo = contenedor.querySelector('.btn-opcion-grafica[data-tipo-grafica].is-active');
+    if (botonActivo) config.tipoGrafica = botonActivo.dataset.tipoGrafica;
     const lista = obtenerPanelesPersonalizados();
     lista.push({ id: 'custom_' + Date.now(), ...config });
     guardarPanelesPersonalizados(lista);
@@ -656,11 +672,20 @@ function renderPanelesPersonalizados() {
 
     const datos = calcularDatosPanelPersonalizado(config);
     if (!datos.length) { document.getElementById(idContenedor).innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
-    if (config.tipo === 'topFallas') {
+    // "promedio" (ej. Score por aliado) no se puede sumar entre categorías —
+    // se lo indicamos a dona/apilada para que no muestren un "total" sin sentido.
+    const opcionesGrafica = config.tipo === 'promedio' ? { modo: 'promedio', etiquetaCentro: (config.campoNumerico || '').toLowerCase() } : undefined;
+    if (config.tipo === 'topFallas' && !config.pideTabla) {
       const max = Math.max(...datos.map(d => d.valor), 1);
       renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max);
+    } else if (config.pideTabla) {
+      // Respeta que la persona haya pedido "tabla" antes de fijar el panel.
+      renderizarComoTabla(idContenedor, datos, config.columnaTabla || config.titulo);
+    } else if (config.tipoGrafica) {
+      // Respeta el tipo de gráfica que la persona eligió antes de fijar el panel.
+      dibujarTipoGrafica(idContenedor, datos, config.tipoGrafica, opcionesGrafica);
     } else {
-      renderizarSegunRecomendacion(idContenedor, datos);
+      renderizarSegunRecomendacion(idContenedor, datos, opcionesGrafica);
     }
   });
 
@@ -866,11 +891,14 @@ function aplicarRangoFechaGlobal(registros, campoFecha) {
 }
 
 /** Dibuja "datos" como dona/apilada/barras (recomendado) dentro de un contenedor del sub-panel. */
-/** Dibuja "datos" en el contenedor con el tipo de gráfica indicado (barras/dona/apilada). */
-function dibujarTipoGrafica(idContenedor, datos, tipo) {
+/** Dibuja "datos" en el contenedor con el tipo de gráfica indicado (barras/dona/apilada).
+ *  opciones.modo: 'suma' (default, ej. conteo de actas) | 'promedio' (ej. Score
+ *  promedio) — en modo 'promedio' los valores NO se deben sumar entre sí para
+ *  mostrar un total, porque sumar dos promedios no significa nada. */
+function dibujarTipoGrafica(idContenedor, datos, tipo, opciones) {
   const coloreados = datos.map((d, i) => ({ ...d, color: PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length] }));
-  if (tipo === 'dona') renderDona(idContenedor, coloreados);
-  else if (tipo === 'apilada') renderBarraApilada(idContenedor, coloreados);
+  if (tipo === 'dona') renderDona(idContenedor, coloreados, opciones);
+  else if (tipo === 'apilada') renderBarraApilada(idContenedor, coloreados, opciones);
   else if (tipo === 'linea') renderLineaGenerica(idContenedor, datos);
   else if (tipo === 'cascada') renderCascada(idContenedor, datos);
   else {
@@ -928,9 +956,9 @@ function renderCascada(contenedorId, datos) {
     <p style="font-size:10px;color:var(--ink-500);text-align:center;margin:4px 0 0;">Total acumulado: ${total}</p>`;
 }
 
-function renderizarSegunRecomendacion(idContenedor, datos) {
+function renderizarSegunRecomendacion(idContenedor, datos, opcionesGrafica) {
   const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
-  dibujarTipoGrafica(idContenedor, datos, rec.tipo);
+  dibujarTipoGrafica(idContenedor, datos, rec.tipo, opcionesGrafica);
   return rec;
 }
 
@@ -938,24 +966,26 @@ function renderizarSegunRecomendacion(idContenedor, datos) {
  * Igual que renderizarSegunRecomendacion, pero además dibuja un selector de
  * tipo de gráfica (Barras / Dona / Apilada / Línea / Cascada) para que la
  * persona elija con cuál quiere ver justo ese resultado, en vez de aceptar
- * solo lo recomendado.
+ * solo lo recomendado. opcionesGrafica: { modo: 'suma' | 'promedio' } — se
+ * reenvía a dibujarTipoGrafica para que dona/apilada sepan si los valores se
+ * pueden sumar (conteos) o no (promedios).
  */
-function renderizarConSelectorTipo(idPicker, idContenedor, datos) {
+function renderizarConSelectorTipo(idPicker, idContenedor, datos, opcionesGrafica) {
   const rec = recomendarTipoGrafica(datos.length, ['dona', 'apilada', 'barras']);
-  const opciones = ['barras', 'dona', 'apilada', 'linea', 'cascada'];
+  const tiposDisponibles = ['barras', 'dona', 'apilada', 'linea', 'cascada'];
 
-  document.getElementById(idPicker).innerHTML = opciones.map(op => `
+  document.getElementById(idPicker).innerHTML = tiposDisponibles.map(op => `
     <button type="button" class="btn-opcion-grafica ${op === rec.tipo ? 'is-active' : ''}"
       data-tipo-grafica="${op}" data-contenedor="${idContenedor}">${NOMBRE_TIPO_GRAFICA[op]}</button>
   `).join('');
 
-  dibujarTipoGrafica(idContenedor, datos, rec.tipo);
+  dibujarTipoGrafica(idContenedor, datos, rec.tipo, opcionesGrafica);
 
   document.querySelectorAll(`#${idPicker} .btn-opcion-grafica`).forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll(`#${idPicker} .btn-opcion-grafica`).forEach(b => b.classList.remove('is-active'));
       btn.classList.add('is-active');
-      dibujarTipoGrafica(btn.dataset.contenedor, datos, btn.dataset.tipoGrafica);
+      dibujarTipoGrafica(btn.dataset.contenedor, datos, btn.dataset.tipoGrafica, opcionesGrafica);
     });
   });
 
@@ -1108,7 +1138,7 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>${escapeHtml(tituloConFiltro)} <span class="severidad-pill sev-baja">${fuente.length} respuesta(s)</span></h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'formulario', campo: campoInfoSup.campo, tipoMedida: tipoMedidaMatch || '', titulo: tituloConFiltro })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'formulario', campo: campoInfoSup.campo, tipoMedida: tipoMedidaMatch || '', titulo: tituloConFiltro, pideTabla, columnaTabla: campoInfoSup.campo })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, campoInfoSup.campo);
     else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
@@ -1127,7 +1157,7 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>Top de fallas más comunes <span class="severidad-pill sev-alta">${datos.length}</span></h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes' })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'topFallas', titulo: 'Top de fallas más comunes', pideTabla, columnaTabla: 'Tipo de falla' })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Tipo de falla');
     else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
@@ -1153,7 +1183,7 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>${escapeHtml(estadoInfo.valor)} por ${escapeHtml(nombreEje)} <span class="severidad-pill sev-media">${filtradas.length}</span></h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo: `${estadoInfo.valor} por ${nombreEje}` })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'cruce', estadoCampo: estadoInfo.campo, estadoValor: estadoInfo.valor, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo: `${estadoInfo.valor} por ${nombreEje}`, pideTabla, columnaTabla: nombreEje })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, nombreEje);
     else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
@@ -1180,10 +1210,10 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>${escapeHtml(titulo)}</h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'promedio', campoNumerico: campoNumericoInfo.campo, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'promedio', campoNumerico: campoNumericoInfo.campo, agrupableCampo: agrupableInfo.campo, esTemporal: !!agrupableInfo.esTemporal, titulo, pideTabla, columnaTabla: nombreEje })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, nombreEje);
-    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
+    else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos, { modo: 'promedio', etiquetaCentro: campoNumericoInfo.campo.toLowerCase() });
     conectarBotonFijarPanel(resultadoCont);
     return;
   }
@@ -1201,7 +1231,7 @@ function ejecutarBusquedaGrafica(texto) {
       <h4>Actas por mes <span class="severidad-pill sev-baja">${actasEnRango.length}</span></h4>
       <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
       <div id="${idContenedor}" class="chart-svg-wrap"></div>
-      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'tendencia', agrupableCampo: agrupableInfo.campo, titulo: 'Actas por mes' })}'>📌 Fijar en el Dashboard</button>
+      <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'tendencia', agrupableCampo: agrupableInfo.campo, titulo: 'Actas por mes', pideTabla, columnaTabla: 'Mes' })}'>📌 Fijar en el Dashboard</button>
     </div>`;
     if (pideTabla) renderizarComoTabla(idContenedor, datos, 'Mes');
     else renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
@@ -1251,7 +1281,7 @@ function ejecutarBusquedaGrafica(texto) {
     <h4>${escapeHtml(campoInfo.campo)} <span class="severidad-pill sev-baja">${datos.length} valores</span></h4>
     <div id="picker_${idContenedor}" class="preferencia-opciones" style="margin-bottom:8px;"></div>
     <div id="${idContenedor}" class="chart-svg-wrap"></div>
-    <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'campo', campo: campoInfo.campo, titulo: campoInfo.campo })}'>📌 Fijar en el Dashboard</button>
+    <button type="button" class="btn-fijar-panel" data-config='${JSON.stringify({ tipo: 'campo', campo: campoInfo.campo, titulo: campoInfo.campo, pideTabla, columnaTabla: campoInfo.campo })}'>📌 Fijar en el Dashboard</button>
   </div>`;
   const rec = renderizarConSelectorTipo(`picker_${idContenedor}`, idContenedor, datos);
   document.querySelector(`#${idContenedor}`).insertAdjacentHTML('beforebegin',
@@ -1966,26 +1996,26 @@ function renderDashboard() {
     { etiqueta: 'Pendiente', valor: k.pendientesManual, clase: 'accent' }
   ], 'dona');
 
-  renderLineaTendencia('chartLinea', calcularActasPorMes());
-  renderAreaChart('chartArea', calcularScorePromedioPorMes(), '');
-  renderHistograma('chartHistograma');
+  renderPanelFlexible('chartLinea', calcularActasPorMes().map(p => ({ etiqueta: p.mes.slice(2).replace('-', '/'), valor: p.cantidad })), 'linea');
+  renderPanelFlexible('chartArea', calcularScorePromedioPorMes().map(p => ({ etiqueta: p.mes.slice(2).replace('-', '/'), valor: +p.valor.toFixed(1) })), 'linea', 'promedio');
+  renderPanelFlexible('chartHistograma', calcularDistribucionScore(), 'barras');
 
   renderPanelFlexible('chartApilada', k.porTipoMedida.map((t, i) => ({
     etiqueta: t.tipo, valor: t.actas, clase: ['', 'accent', 'success'][i % 3]
   })), 'apilada');
 
-  // Conformidad por aliado — barra de marca (púrpura), roja solo si supera 20% NC
-  renderBarras('chartAliados', k.porAliado.map(a => ({
-    etiqueta: a.aliado, valor: a.pctNC, texto: (a.pctNC * 100).toFixed(1) + '%',
+  // Conformidad por aliado — % de no conformidad (no es un conteo: sumar los
+  // % de varios aliados no da un "total" con sentido, por eso modo 'promedio').
+  renderPanelFlexible('chartAliados', k.porAliado.map(a => ({
+    etiqueta: a.aliado, valor: +(a.pctNC * 100).toFixed(1), sufijo: '%',
     clase: a.pctNC > 0.2 ? 'danger' : 'accent'
-  })), 1);
+  })), 'barras', 'promedio');
 
-  // Score por tipo de medida — púrpura de marca, rojo solo si score bajo
-  const maxScore = Math.max(100, ...k.porTipoMedida.map(t => t.scoreProm));
-  renderBarras('chartTipoMedida', k.porTipoMedida.map(t => ({
-    etiqueta: t.tipo, valor: t.scoreProm, texto: t.scoreProm.toFixed(1),
+  // Score por tipo de medida — también es un promedio, mismo criterio.
+  renderPanelFlexible('chartTipoMedida', k.porTipoMedida.map(t => ({
+    etiqueta: t.tipo, valor: +t.scoreProm.toFixed(1),
     clase: t.scoreProm < 70 ? 'danger' : ''
-  })), maxScore);
+  })), 'barras', 'promedio');
 
   // Acuerdo vs Desacuerdo (Manual vs IA)
   renderPanelFlexible('chartAcuerdo', [
@@ -2137,38 +2167,53 @@ function renderBarras(contenedorId, items, maxValor) {
 /**
  * Gráfico de dona (pastel con hueco) — el más fácil de leer para mostrar
  * proporciones de un total (ej. cuántas actas están conformes/pendientes).
- * segmentos: [{ etiqueta, valor, color }], total opcional (si no, se suma).
+ * segmentos: [{ etiqueta, valor, color }].
+ * opciones.modo: 'suma' (default) | 'promedio' — en 'promedio' los valores
+ * son promedios de distintas categorías (ej. Score por aliado) y NO se deben
+ * sumar entre sí ni mostrarse como "% del total", porque no son partes de un
+ * mismo todo. En ese modo el centro muestra el promedio general en vez de la
+ * suma, y la leyenda no muestra porcentaje.
  */
-function renderDona(contenedorId, segmentos, total) {
+function renderDona(contenedorId, segmentos, opciones) {
+  opciones = opciones || {};
+  const modoPromedio = opciones.modo === 'promedio';
   const cont = document.getElementById(contenedorId);
-  const suma = total || segmentos.reduce((s, x) => s + x.valor, 0);
-  if (!suma) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+  const suma = segmentos.reduce((s, x) => s + x.valor, 0);
+  if (!suma && !segmentos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
 
   const r = 60, cx = 80, cy = 80, grosor = 22;
   const circunferencia = 2 * Math.PI * r;
   let acumulado = 0;
+  // En modo promedio, el ancho de cada arco no puede representar "% del total"
+  // (no existe tal total) — se reparte en partes iguales, la longitud del arco
+  // ya no es informativa por sí sola, así que el valor real va en el tooltip
+  // y la leyenda, no en el tamaño del arco.
+  const pesoIgual = 1 / (segmentos.filter(s => s.valor > 0).length || 1);
 
   const arcos = segmentos.filter(s => s.valor > 0).map(s => {
-    const pct = s.valor / suma;
+    const pct = modoPromedio ? pesoIgual : (s.valor / suma);
     const largo = pct * circunferencia;
     const offset = -acumulado * circunferencia;
     acumulado += pct;
+    const tituloPct = modoPromedio ? '' : ` (${(pct * 100).toFixed(0)}%)`;
     return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" style="stroke:${s.color}"
       stroke-width="${grosor}" stroke-dasharray="${largo} ${circunferencia - largo}"
-      stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(String(s.etiqueta))}: ${s.valor} (${(pct * 100).toFixed(0)}%)</title></circle>`;
+      stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(String(s.etiqueta))}: ${s.valor}${tituloPct}</title></circle>`;
   }).join('');
 
+  const valorCentro = modoPromedio ? (suma / (segmentos.length || 1)) : suma;
+  const etiquetaCentro = opciones.etiquetaCentro || (modoPromedio ? 'promedio' : 'actas');
   const svg = `<svg viewBox="0 0 160 160" width="180" height="180">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--ink-100)" stroke-width="${grosor}"></circle>
     ${arcos}
-    <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="dona-centro-valor">${suma}</text>
-    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dona-centro-label">actas</text>
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="dona-centro-valor">${modoPromedio ? valorCentro.toFixed(1) : valorCentro}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dona-centro-label">${escapeHtml(etiquetaCentro)}</text>
   </svg>`;
 
   const leyenda = segmentos.map(s => `
     <span class="chart-leyenda-item">
       <span class="chart-leyenda-dot" style="background:${s.color}"></span>
-      ${escapeHtml(s.etiqueta)}: <b>${s.valor}</b> (${suma ? ((s.valor / suma) * 100).toFixed(0) : 0}%)
+      ${escapeHtml(s.etiqueta)}: <b>${s.valor}</b>${modoPromedio ? '' : ` (${suma ? ((s.valor / suma) * 100).toFixed(0) : 0}%)`}
     </span>`).join('');
 
   cont.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">${svg}<div class="chart-leyenda">${leyenda}</div></div>`;
@@ -2280,6 +2325,26 @@ function renderAreaChart(contenedorId, puntos, sufijo) {
  * 90-100) y muestra cuántas actas caen en cada rango. Es la forma más clara
  * de ver si tus actas se concentran en scores altos o bajos.
  */
+/** Igual que renderHistograma pero devuelve los datos en formato genérico {etiqueta,valor,clase}
+ *  para poder alimentar cualquier tipo de gráfica (no solo el histograma de barras fijo). */
+function calcularDistribucionScore(actasFuente) {
+  const cortes = [
+    { desde: 0, hasta: 59, etiqueta: '0-59', clase: 'danger' },
+    { desde: 60, hasta: 69, etiqueta: '60-69', clase: 'warning' },
+    { desde: 70, hasta: 79, etiqueta: '70-79', clase: 'warning' },
+    { desde: 80, hasta: 89, etiqueta: '80-89', clase: 'success' },
+    { desde: 90, hasta: 100, etiqueta: '90-100', clase: 'success' }
+  ];
+  const conteo = cortes.map(c => ({ etiqueta: c.etiqueta, valor: 0, clase: c.clase, desde: c.desde, hasta: c.hasta }));
+  (actasFuente || state.actas).forEach(a => {
+    const score = parseFloat(a['Score']);
+    if (isNaN(score)) return;
+    const bucket = conteo.find(c => score >= c.desde && score <= c.hasta);
+    if (bucket) bucket.valor++;
+  });
+  return conteo;
+}
+
 function renderHistograma(contenedorId, actasFuente) {
   const cont = document.getElementById(contenedorId);
   const cortes = [
@@ -2325,14 +2390,26 @@ function renderHistograma(contenedorId, actasFuente) {
  * pocas categorías (ej. cuántas actas son semidirecta/indirecta/directa).
  * segmentos: [{ etiqueta, valor, color }]
  */
-function renderBarraApilada(contenedorId, segmentos) {
+/**
+ * Barra apilada — para conteos (partes de un total) por default. Si
+ * opciones.modo === 'promedio', los valores no son partes de un todo (ej.
+ * Score promedio por aliado) y el ancho de cada segmento se reparte en partes
+ * iguales en vez de "% del total" — el valor real va en el texto/tooltip.
+ */
+function renderBarraApilada(contenedorId, segmentos, opciones) {
+  opciones = opciones || {};
+  const modoPromedio = opciones.modo === 'promedio';
   const cont = document.getElementById(contenedorId);
   const total = segmentos.reduce((s, x) => s + x.valor, 0);
-  if (!total) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+  if (!total && !segmentos.length) { cont.innerHTML = '<p style="color:var(--ink-500);font-size:13px;">Sin datos aún.</p>'; return; }
+  const visibles = segmentos.filter(s => s.valor > 0);
+  const pesoIgual = 100 / (visibles.length || 1);
 
-  const track = segmentos.filter(s => s.valor > 0).map(s => {
-    const pct = (s.valor / total) * 100;
-    return `<span class="apilada-segmento" style="width:${pct}%;background:${s.color}" title="${escapeHtml(String(s.etiqueta))}: ${s.valor} (${pct.toFixed(0)}%)">${pct >= 8 ? pct.toFixed(0) + '%' : ''}</span>`;
+  const track = visibles.map(s => {
+    const pct = modoPromedio ? pesoIgual : (s.valor / total) * 100;
+    const etiquetaSegmento = modoPromedio ? String(s.valor) : pct.toFixed(0) + '%';
+    const tituloPct = modoPromedio ? '' : ` (${pct.toFixed(0)}%)`;
+    return `<span class="apilada-segmento" style="width:${pct}%;background:${s.color}" title="${escapeHtml(String(s.etiqueta))}: ${s.valor}${tituloPct}">${pct >= 8 ? etiquetaSegmento : ''}</span>`;
   }).join('');
 
   const leyenda = segmentos.map(s => `
@@ -3054,7 +3131,7 @@ function calcularKpisLocal(actas) {
 // ============================================================================
 const COLOR_MAP = {
   '': 'var(--purple-500)', accent: 'var(--orange-500)',
-  success: 'var(--green-600)', danger: 'var(--red-600)'
+  success: 'var(--green-600)', danger: 'var(--red-600)', warning: 'var(--amber-700)'
 };
 
 function obtenerVistaGuardada(contenedorId, porDefecto) {
@@ -3062,23 +3139,33 @@ function obtenerVistaGuardada(contenedorId, porDefecto) {
 }
 
 /**
- * Dibuja "datos" (formato común [{etiqueta, valor, clase}]) como Barras, Dona
- * o Barra apilada, según lo que el usuario haya elegido para ese panel
- * (se recuerda en localStorage). Así una misma gráfica puede verse de la
- * forma que a cada persona le resulte más fácil de leer.
+ * Dibuja "datos" (formato común [{etiqueta, valor, clase}]) como Barras, Dona,
+ * Barra apilada, Línea o Cascada, según lo que el usuario haya elegido para
+ * ese panel (se recuerda en localStorage). Así una misma gráfica puede verse
+ * de la forma que a cada persona le resulte más fácil de leer — funciona
+ * igual para CUALQUIER panel del Dashboard, no solo los 4 originales.
  */
-function renderPanelFlexible(contenedorId, datos, porDefecto) {
+function renderPanelFlexible(contenedorId, datos, porDefecto, modo) {
   const tipo = obtenerVistaGuardada(contenedorId, porDefecto || 'barras');
   const selector = document.querySelector(`.selector-vista[data-target="${contenedorId}"]`);
   if (selector && selector.value !== tipo) selector.value = tipo;
 
+  const coloreados = datos.map((d, i) => ({
+    ...d, color: (d.clase !== undefined && COLOR_MAP[d.clase]) ? COLOR_MAP[d.clase] : PALETA_MULTICOLOR[i % PALETA_MULTICOLOR.length]
+  }));
+  const opcionesGrafica = modo ? { modo } : undefined;
+
   if (tipo === 'dona') {
-    renderDona(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, color: COLOR_MAP[d.clase || ''] })));
+    renderDona(contenedorId, coloreados, opcionesGrafica);
   } else if (tipo === 'apilada') {
-    renderBarraApilada(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, color: COLOR_MAP[d.clase || ''] })));
+    renderBarraApilada(contenedorId, coloreados, opcionesGrafica);
+  } else if (tipo === 'linea') {
+    renderLineaGenerica(contenedorId, datos);
+  } else if (tipo === 'cascada') {
+    renderCascada(contenedorId, datos);
   } else {
     const max = Math.max(...datos.map(d => d.valor), 1);
-    renderBarras(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: d.clase })), max);
+    renderBarras(contenedorId, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor) + (d.sufijo || ''), clase: d.clase })), max);
   }
 }
 
