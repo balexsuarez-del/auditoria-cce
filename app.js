@@ -3169,6 +3169,7 @@ function configurarVistas() {
   });
 
   configurarSoloMisPaneles();
+  configurarLimpiarDashboard();
   configurarMostrarOcultarGraficas();
 }
 
@@ -3192,6 +3193,25 @@ function configurarMostrarOcultarGraficas() {
  * mostrando solo lo que tú elegiste. Recuerda antes cuáles estaban visibles,
  * para poder devolverlos igual al desactivar el modo.
  */
+/**
+ * Botón "🧹 Limpiar": oculta TODOS los paneles de una vez (originales y
+ * fijados), sin excepción — la forma más directa de dejar el Dashboard en
+ * blanco para empezar de cero y pedir solo lo que se quiera ver. También
+ * resetea "Solo mis paneles" para que no quede en un estado inconsistente.
+ */
+function configurarLimpiarDashboard() {
+  const btn = document.getElementById('btnLimpiarDashboard');
+  btn.addEventListener('click', () => {
+    guardarPanelesVisibles([]);
+    localStorage.removeItem('cce_solo_mis_paneles');
+    localStorage.removeItem('cce_paneles_visibles_antes_de_solo_mios');
+    aplicarVisibilidadPaneles();
+    const btnSolo = document.getElementById('btnSoloMisPaneles');
+    if (btnSolo) btnSolo.textContent = '🎯 Solo mis paneles';
+    mostrarToast('Dashboard limpio. Pide lo que quieras ver desde "¿Qué quieres ver?".', 'success');
+  });
+}
+
 function configurarSoloMisPaneles() {
   const btn = document.getElementById('btnSoloMisPaneles');
 
