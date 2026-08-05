@@ -679,15 +679,17 @@ function renderPanelesPersonalizados() {
     // "promedio" (ej. Score por aliado) no se puede sumar entre categorías —
     // se lo indicamos a dona/apilada para que no muestren un "total" sin sentido.
     const opcionesGrafica = config.tipo === 'promedio' ? { modo: 'promedio', etiquetaCentro: (config.campoNumerico || '').toLowerCase() } : undefined;
-    if (config.tipo === 'topFallas' && !config.pideTabla) {
-      const max = Math.max(...datos.map(d => d.valor), 1);
-      renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max);
-    } else if (config.pideTabla) {
+    if (config.pideTabla) {
       // Respeta que la persona haya pedido "tabla" antes de fijar el panel.
       renderizarComoTabla(idContenedor, datos, config.columnaTabla || config.titulo);
     } else if (config.tipoGrafica) {
-      // Respeta el tipo de gráfica que la persona eligió antes de fijar el panel.
+      // Respeta el tipo de gráfica que la persona eligió antes de fijar el panel
+      // (esto va ANTES del caso especial de 'topFallas' — antes ese caso especial
+      // siempre ganaba y mostraba barras rojas fijas sin importar qué se hubiera elegido).
       dibujarTipoGrafica(idContenedor, datos, config.tipoGrafica, opcionesGrafica);
+    } else if (config.tipo === 'topFallas') {
+      const max = Math.max(...datos.map(d => d.valor), 1);
+      renderBarras(idContenedor, datos.map(d => ({ etiqueta: d.etiqueta, valor: d.valor, texto: String(d.valor), clase: 'danger' })), max);
     } else {
       renderizarSegunRecomendacion(idContenedor, datos, opcionesGrafica);
     }
