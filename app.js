@@ -20,27 +20,31 @@ const state = {
 
 // Campos que el usuario puede editar manualmente en el formulario de acta.
 // (# se autogenera; Dif. Factor y Acuerdo T=U se calculan en el backend)
+// Solo "Supervisión Manual (T)" es editable aquí — el resto son datos de
+// referencia del acta (vienen de Snowflake/Estadium) o hallazgos automáticos
+// (R01-R07, Score, Supervisión IA), y no deben modificarse a mano desde este
+// formulario. Quedan visibles como contexto, pero deshabilitados.
 const CAMPOS_FORM = [
-  { campo: 'Fecha', tipo: 'text', placeholder: 'YYYY-MM-DD' },
-  { campo: 'Ciudad', tipo: 'text' },
-  { campo: 'Aliado', tipo: 'text' },
-  { campo: 'Técnico', tipo: 'text' },
-  { campo: 'Serie Medidor', tipo: 'text' },
-  { campo: 'Tipo Medida', tipo: 'select', opciones: ['directa', 'semidirecta', 'indirecta'] },
-  { campo: 'V. Servicio', tipo: 'number' },
-  { campo: 'V. Alta Trafo', tipo: 'number' },
-  { campo: 'V. Baja Trafo', tipo: 'number' },
-  { campo: 'Factor acta (K)', tipo: 'number' },
-  { campo: 'Factor real (L)', tipo: 'number' },
-  { campo: 'R01 Tensión', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'R03 Formato', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'R04 Foto Serial', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'R05 Foto Sistema', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'R06 Sellos', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'R07 Caja', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
-  { campo: 'Score', tipo: 'number' },
+  { campo: 'Fecha', tipo: 'text', placeholder: 'YYYY-MM-DD', soloLectura: true },
+  { campo: 'Ciudad', tipo: 'text', soloLectura: true },
+  { campo: 'Aliado', tipo: 'text', soloLectura: true },
+  { campo: 'Técnico', tipo: 'text', soloLectura: true },
+  { campo: 'Serie Medidor', tipo: 'text', soloLectura: true },
+  { campo: 'Tipo Medida', tipo: 'select', opciones: ['directa', 'semidirecta', 'indirecta'], soloLectura: true },
+  { campo: 'V. Servicio', tipo: 'number', soloLectura: true },
+  { campo: 'V. Alta Trafo', tipo: 'number', soloLectura: true },
+  { campo: 'V. Baja Trafo', tipo: 'number', soloLectura: true },
+  { campo: 'Factor acta (K)', tipo: 'number', soloLectura: true },
+  { campo: 'Factor real (L)', tipo: 'text', placeholder: 'Número, o "OK" si coincide con Factor acta' },
+  { campo: 'R01 Tensión', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R03 Formato', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R04 Foto Serial', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R05 Foto Sistema', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R06 Sellos', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R07 Caja', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'Score', tipo: 'number', soloAutomatico: true },
   { campo: 'Supervisión Manual (T)', tipo: 'select', opciones: ['PENDIENTE', 'CONFORME', 'NO CONFORMIDAD'] },
-  { campo: 'Supervisión IA (U)', tipo: 'select', opciones: ['PENDIENTE', 'CONFORME', 'NO CONFORMIDAD'] },
+  { campo: 'Supervisión IA (U)', tipo: 'select', opciones: ['PENDIENTE', 'CONFORME', 'NO CONFORMIDAD'], soloLectura: true },
   { campo: 'Fallos Detectados', tipo: 'textarea', span2: true },
   { campo: 'Tipo de acta', tipo: 'text' },
   { campo: 'Order ID', tipo: 'text' }
@@ -4024,32 +4028,159 @@ function abrirModalActa(id) {
 
   const acta = id ? state.actas.find(a => a['#'] === id) : {};
   const form = document.getElementById('formActa');
-  form.innerHTML = CAMPOS_FORM.map(f => campoHtml(f, acta ? acta[f.campo] : '')).join('');
+  // La restricción de "solo Supervisión Manual editable" aplica al EDITAR una
+  // acta ya existente (donde los demás datos ya vienen de Estadium/Snowflake).
+  // Al crear una acta nueva no hay datos previos que proteger, así que ahí sí
+  // se pueden diligenciar todos los campos.
+  const esEdicion = !!id;
+  form.innerHTML = CAMPOS_FORM.map(f => campoHtml(f, acta ? acta[f.campo] : '', esEdicion)).join('');
 
+  conectarRetroalimentacionFactor(form);
+  conectarAdvertenciaScore(form);
   abrirModal('modalActa');
 }
 
-function campoHtml(f, valor) {
+/**
+ * Mientras se escribe en "Factor real (L)", muestra de inmediato si concuerda
+ * con "Factor acta (K)" — usa exactamente la misma regla que ya aplica el
+ * Dashboard y el backend (calcularConcordanciaFactor / applyFormulas):
+ * escribir la palabra "OK" cuenta como que el auditor confirmó que coincide,
+ * sin necesidad de guardar primero para saberlo.
+ */
+function conectarRetroalimentacionFactor(form) {
+  const campoReal = form.querySelector('[name="Factor real (L)"]');
+  const campoActa = form.querySelector('[name="Factor acta (K)"]');
+  if (!campoReal) return;
+
+  let feedback = form.querySelector('#factorFeedback');
+  if (!feedback) {
+    feedback = document.createElement('span');
+    feedback.id = 'factorFeedback';
+    feedback.className = 'factor-feedback';
+    campoReal.closest('.form-field').appendChild(feedback);
+  }
+
+  const actualizar = () => {
+    const realTexto = campoReal.value.trim().toLowerCase();
+    const actaNum = parseFloat(campoActa ? campoActa.value : '');
+    if (!realTexto) { feedback.textContent = ''; return; }
+    if (realTexto === 'ok') {
+      feedback.textContent = '✅ Confirmado manualmente como concordante';
+      feedback.className = 'factor-feedback factor-ok';
+      return;
+    }
+    const realNum = parseFloat(realTexto);
+    if (isNaN(realNum) || isNaN(actaNum)) { feedback.textContent = ''; return; }
+    if (realNum === actaNum) {
+      feedback.textContent = '✅ Concuerda con Factor acta (K)';
+      feedback.className = 'factor-feedback factor-ok';
+    } else {
+      feedback.textContent = `⚠️ No concuerda (diferencia de ${Math.abs(realNum - actaNum)})`;
+      feedback.className = 'factor-feedback factor-mal';
+    }
+  };
+
+  campoReal.addEventListener('input', actualizar);
+  actualizar();
+}
+
+/**
+ * Ajusta el Score AUTOMÁTICAMENTE (sin pedir confirmación) cuando:
+ *  - Supervisión Manual y Supervisión IA no coinciden → -15 puntos
+ *  - Factor real (L) no concuerda con Factor acta (K) → -15 puntos
+ * Parte siempre del Score que ya traía el acta al abrir el modal (scoreBase),
+ * y se recalcula en vivo cada vez que cambia Supervisión Manual o Factor real
+ * — el campo Score queda "readonly" (no se edita a mano) precisamente porque
+ * lo controla esta función, pero SÍ viaja al guardar.
+ */
+function conectarAdvertenciaScore(form) {
+  const campoManual = form.querySelector('[name="Supervisión Manual (T)"]');
+  const campoIA = form.querySelector('[name="Supervisión IA (U)"]');
+  const campoFactorReal = form.querySelector('[name="Factor real (L)"]');
+  const campoFactorActa = form.querySelector('[name="Factor acta (K)"]');
+  const campoScore = form.querySelector('[name="Score"]');
+  if (!campoScore || !campoManual) return;
+
+  const scoreBase = parseFloat(campoScore.value);
+  if (isNaN(scoreBase)) return; // sin score de referencia, no hay nada que ajustar
+
+  const PENALIZACION_DESACUERDO = 15;
+  const PENALIZACION_FACTOR = 15;
+
+  let nota = campoScore.closest('.form-field').querySelector('.score-nota');
+  if (!nota) {
+    nota = document.createElement('span');
+    nota.className = 'score-nota';
+    campoScore.closest('.form-field').appendChild(nota);
+  }
+
+  const recalcular = () => {
+    const manual = (campoManual.value || '').trim().toUpperCase();
+    const ia = (campoIA ? campoIA.value : '').trim().toUpperCase();
+    const hayDesacuerdo = manual && ia && manual !== 'PENDIENTE' && ia !== 'PENDIENTE' && manual !== ia;
+
+    const realTexto = (campoFactorReal ? campoFactorReal.value : '').trim().toLowerCase();
+    const actaNum = parseFloat(campoFactorActa ? campoFactorActa.value : '');
+    let factorNoConcuerda = false;
+    if (realTexto && realTexto !== 'ok') {
+      const realNum = parseFloat(realTexto);
+      if (!isNaN(realNum) && !isNaN(actaNum) && realNum !== actaNum) factorNoConcuerda = true;
+    }
+
+    let nuevoScore = scoreBase;
+    const motivos = [];
+    if (hayDesacuerdo) { nuevoScore -= PENALIZACION_DESACUERDO; motivos.push(`-${PENALIZACION_DESACUERDO} desacuerdo Manual/IA`); }
+    if (factorNoConcuerda) { nuevoScore -= PENALIZACION_FACTOR; motivos.push(`-${PENALIZACION_FACTOR} Factor real≠acta`); }
+    nuevoScore = Math.max(0, nuevoScore);
+
+    campoScore.value = nuevoScore;
+    nota.textContent = motivos.length ? `⚠️ Ajustado: ${motivos.join(', ')} (base ${scoreBase})` : `Score original: ${scoreBase}`;
+    nota.className = 'score-nota' + (motivos.length ? ' score-penalizado' : '');
+  };
+
+  campoManual.addEventListener('change', recalcular);
+  if (campoFactorReal) campoFactorReal.addEventListener('input', recalcular);
+  recalcular();
+}
+
+function campoHtml(f, valor, esEdicion) {
   valor = valor === undefined || valor === null ? '' : valor;
   const spanClass = f.span2 ? ' span-2' : '';
+  const esSoloLectura = f.soloLectura && esEdicion;
+  // "soloAutomatico" es distinto de "soloLectura": usa readonly (no disabled),
+  // así que SÍ viaja en el FormData al guardar — porque el valor lo pone el
+  // propio sistema (ver conectarAdvertenciaScore), no queda vacío como pasaría
+  // con un campo disabled.
+  const esAutomatico = !!f.soloAutomatico;
+  const soloLecturaAttr = esSoloLectura ? 'disabled' : (esAutomatico ? 'readonly' : '');
+  const soloLecturaClass = (esSoloLectura || esAutomatico) ? ' campo-solo-lectura' : '';
   let control;
   if (f.tipo === 'select') {
-    control = `<select name="${f.campo}">` +
+    control = `<select name="${f.campo}" ${esSoloLectura ? 'disabled' : ''}>` +
       f.opciones.map(op => `<option value="${op}" ${op === valor ? 'selected' : ''}>${op}</option>`).join('') +
       `</select>`;
   } else if (f.tipo === 'textarea') {
-    control = `<textarea name="${f.campo}" rows="3">${escapeHtml(valor)}</textarea>`;
+    control = `<textarea name="${f.campo}" rows="3" ${soloLecturaAttr}>${escapeHtml(valor)}</textarea>`;
   } else {
-    control = `<input type="${f.tipo}" name="${f.campo}" value="${escapeHtml(valor)}" ${f.placeholder ? `placeholder="${f.placeholder}"` : ''}>`;
+    control = `<input type="${f.tipo}" name="${f.campo}" value="${escapeHtml(valor)}" ${f.placeholder ? `placeholder="${f.placeholder}"` : ''} ${soloLecturaAttr}>`;
   }
-  return `<div class="form-field${spanClass}"><label>${f.campo}</label>${control}</div>`;
+  const etiqueta = esSoloLectura ? `${f.campo} <span class="etiqueta-solo-lectura">🔒 solo lectura</span>`
+    : esAutomatico ? `${f.campo} <span class="etiqueta-solo-lectura">🔄 se ajusta solo</span>`
+    : f.campo;
+  return `<div class="form-field${spanClass}${soloLecturaClass}"><label>${etiqueta}</label>${control}</div>`;
 }
 
 async function onGuardarActa(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
+  // Los campos "solo lectura" están deshabilitados, y un <input disabled> NO
+  // se incluye en FormData — sin este resguardo, guardar el formulario
+  // borraría esos campos en vez de dejarlos como estaban.
+  const actaOriginal = (state.editandoId && state.actas.find(a => a['#'] === state.editandoId)) || {};
   const cambios = {};
-  CAMPOS_FORM.forEach(f => { cambios[f.campo] = formData.get(f.campo) || ''; });
+  CAMPOS_FORM.forEach(f => {
+    cambios[f.campo] = formData.has(f.campo) ? (formData.get(f.campo) || '') : (actaOriginal[f.campo] || '');
+  });
 
   const btn = document.getElementById('btnGuardarActa');
   btn.disabled = true;
