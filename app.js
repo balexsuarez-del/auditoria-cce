@@ -2454,18 +2454,28 @@ function renderOpcionesPowerPoint() {
       if (calcularTopFallas(1, state.actas).length) relevantes.add('topFallas');
       relevantes.add('conclusiones');
       cont.querySelectorAll('.chk-seccion-ppt').forEach(chk => { chk.checked = relevantes.has(chk.value); });
-      nota.textContent = `Marqué las secciones con datos relevantes ahora mismo (destaca: "${prioridad.titulo}").`;
+      nota.textContent = `Marqué las secciones con datos relevantes ahora mismo (destaca: "${prioridad.titulo}"). Para incluir Desacuerdos Manual≠IA o el formulario de Supervisión como gráfica aparte, usa "Interactiva".`;
     } else if (modoActual === 'reducida') {
       const hayAliadosRiesgo = state.hallazgosPorAliado && state.hallazgosPorAliado.length;
       cont.querySelectorAll('.chk-tarjeta-ppt').forEach(chk => {
         if (chk.value === 'noConformidad') chk.checked = true;
         if (chk.value === 'porAliado') chk.checked = !!hayAliadosRiesgo;
       });
-      nota.textContent = `Sugerido según tus datos actuales — lo más urgente es "${prioridad.titulo}" (${prioridad.items.length} caso(s)).`;
+      nota.textContent = `Sugerido según tus datos actuales — lo más urgente es "${prioridad.titulo}" (${prioridad.items.length} caso(s)). Para Desacuerdos Manual≠IA o el formulario de Supervisión, usa "Interactiva".`;
     } else {
-      // Para la interactiva, se sugiere una consulta libre lista para agregar como diapositiva extra.
-      document.getElementById('pptConsultaLibre').value = prioridad.titulo.toLowerCase();
-      nota.textContent = `Sugerencia agregada al campo de arriba — puedes editarla antes de abrir la presentación.`;
+      // Para la interactiva: sugerencias CONCRETAS ya verificadas con datos reales,
+      // una de cada fuente pedida (Datos completos, Desacuerdos Manual≠IA, Formulario).
+      const sugerencias = generarSugerenciasPresentacion();
+      if (!sugerencias.length) {
+        nota.textContent = 'No encontré datos suficientes en Datos completos, Desacuerdos ni en el formulario de Supervisión para sugerir algo ahora mismo.';
+      } else {
+        nota.innerHTML = 'Elige una (ya verificada con datos reales):<br>' + sugerencias.map(s =>
+          `<button type="button" class="btn-opcion-grafica btn-sugerencia-guiada" data-consulta="${escapeHtml(s.texto)}" style="margin:4px 4px 0 0;">${escapeHtml(s.resultado.titulo)}</button>`
+        ).join('');
+        nota.querySelectorAll('.btn-sugerencia-guiada').forEach(btn => {
+          btn.addEventListener('click', () => { document.getElementById('pptConsultaLibre').value = btn.dataset.consulta; });
+        });
+      }
     }
   });
 
@@ -2557,6 +2567,36 @@ function interpretarConsultaLibre(texto) {
   const q = texto.toLowerCase().trim();
   const actasEnRango = state.actas;
 
+  // "formulario X [por Y]" — datos del formulario de Supervisión Manual (Microsoft Forms),
+  // distintos de "Datos completos". Se activa solo si la palabra "formulario" aparece.
+  if (q.includes('formulario')) {
+    const fuente = state.supervisionDetalle || [];
+    const sinFormulario = q.replace('formulario', '').trim();
+    const partes = sinFormulario.split(' por ');
+    const buscarEn = (texto) => CAMPOS_SUPERVISION.find(c => c.claves.some(k => texto.includes(k)));
+
+    if (partes.length === 2) {
+      // "formulario <medida> por <agrupador>" — ej. "formulario no conformidad por aliado"
+      const campoInfoSup = buscarEn(partes[0]);
+      const agrupableSup = buscarEn(partes[1]);
+      if (campoInfoSup && agrupableSup) {
+        // Solo cuenta los registros donde ese campo SÍ tiene algo registrado
+        // (no vacío / "No" / "N/A") — así "no conformidad por aliado" cuenta
+        // hallazgos reales, no todos los registros sin distinción.
+        const filtradas = fuente.filter(r => {
+          const v = (r[campoInfoSup.campo] || '').toString().trim().toLowerCase();
+          return v && v !== 'no' && v !== 'n/a' && v !== 'ninguno';
+        });
+        return { titulo: `Formulario: ${campoInfoSup.campo} por ${agrupableSup.campo}`, datos: agregarPorCategoria(agrupableSup.campo, filtradas), esPromedio: false };
+      }
+    }
+    const campoInfoSup = buscarEn(sinFormulario);
+    if (campoInfoSup) {
+      return { titulo: `Formulario: ${campoInfoSup.campo}`, datos: agregarPorCategoria(campoInfoSup.campo, fuente), esPromedio: false };
+    }
+    return null;
+  }
+
   const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
   const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
   const campoNumericoInfo = CAMPOS_GRAFICABLES.find(c => c.esNumerico && c.claves.some(k => q.includes(k)));
@@ -2579,6 +2619,28 @@ function interpretarConsultaLibre(texto) {
     return { titulo: campoInfo.campo, datos: agregarPorCategoria(campoInfo.campo, actasEnRango), esPromedio: !!campoInfo.esNumerico };
   }
   return null;
+}
+
+/**
+ * Genera hasta 3 sugerencias CONCRETAS y garantizadas (ya verificadas con
+ * datos reales, no un título narrativo del diagnóstico) — una de cada fuente
+ * que se pidió: Datos completos, Desacuerdos Manual≠IA, y el formulario de
+ * Supervisión Manual. Cada una ya se probó con interpretarConsultaLibre, así
+ * que si se muestra es porque SÍ va a producir una gráfica con datos.
+ */
+function generarSugerenciasPresentacion() {
+  const candidatas = [
+    'no conformidad por aliado',      // Datos completos
+    'score por aliado',               // Datos completos (promedio)
+    'desacuerdo por aliado',          // Desacuerdos Manual ≠ IA
+    'desacuerdo por mes',             // Desacuerdos Manual ≠ IA, tendencia
+    'formulario no conformidad por aliado', // Supervisión Manual (formulario)
+    'formulario conforme por aliado'        // Supervisión Manual (formulario)
+  ];
+  return candidatas
+    .map(texto => ({ texto, resultado: interpretarConsultaLibre(texto) }))
+    .filter(c => c.resultado && c.resultado.datos && c.resultado.datos.length)
+    .slice(0, 3);
 }
 
 function abrirPresentacionInteractiva(fechaDesde, fechaHasta, consultaLibre) {
