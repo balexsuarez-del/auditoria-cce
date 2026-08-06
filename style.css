@@ -752,6 +752,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .slide-portada-marca { font-size: 22px; font-weight: 800; margin-bottom: 40px; color: white; }
 .slide-portada-marca span { color: var(--orange-100); }
+.slide-logo { position: absolute; top: 24px; right: 28px; width: 130px; height: auto; }
+.slide-logo-oscuro { background: white; border-radius: 8px; padding: 6px 10px; }
+.slide-iconos-redes { position: absolute; bottom: 20px; left: 28px; height: 18px; }
 .slide-portada h1 { font-size: 46px; font-weight: 800; margin: 0 0 14px; outline: none; }
 .slide-portada h1:focus, .slide-portada .slide-subtitulo:focus { background: rgba(255,255,255,0.12); border-radius: 6px; }
 .slide-subtitulo { font-size: 18px; margin: 0 0 8px; opacity: 0.92; outline: none; }

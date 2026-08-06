@@ -2387,8 +2387,16 @@ function renderOpcionesPowerPoint() {
       <button type="button" class="btn-opcion-grafica" data-modo-ppt="reducida">📇 Reducida (tarjetas)</button>
       <button type="button" class="btn-opcion-grafica" data-modo-ppt="interactiva">🖥️ Interactiva (HTML editable)</button>
     </div>
+    <div class="asistente-pregunta" style="padding:0 0 6px; flex-direction:column; align-items:stretch;">
+      <label style="font-size:12px; font-weight:600; color:var(--ink-500); margin-bottom:4px;">➕ ¿Alguna gráfica o dato específico que quieras incluir? (opcional)</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="pptConsultaLibre" placeholder="Ej: score por aliado, no conformidad por mes…" style="flex:1;">
+        <button type="button" class="btn btn-ghost btn-icon" id="btnPptSugerir">🤖 Sugerir</button>
+      </div>
+      <p class="panel-note" id="pptNotaSugerencia" style="margin:6px 0 0;"></p>
+    </div>
     <div id="opcionesPptInteractiva" style="display:none;">
-      <p class="panel-note" style="margin:0 0 12px;">Abre una presentación en pantalla que puedes editar (títulos, notas, tipo de gráfica) antes de descargarla — en HTML o en PowerPoint, con el mismo contenido que hayas dejado.</p>
+      <p class="panel-note" style="margin:0 0 12px;">Abre una presentación en pantalla que puedes editar (títulos, notas, tipo de gráfica) antes de descargarla — en HTML o en PowerPoint, con el mismo contenido que hayas dejado. Si escribiste algo arriba, se agrega como una diapositiva extra.</p>
     </div>
     <div id="opcionesPptCompleta">
       <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
@@ -2431,11 +2439,42 @@ function renderOpcionesPowerPoint() {
   });
 
   document.getElementById('btnVolverDesdePpt').addEventListener('click', renderAsistente);
+
+  document.getElementById('btnPptSugerir').addEventListener('click', () => {
+    const gruposOODA = ejecutarDiagnostico();
+    const nota = document.getElementById('pptNotaSugerencia');
+    if (!gruposOODA.length) { nota.textContent = 'No hay hallazgos suficientes ahora mismo para sugerir algo — no cambié nada.'; return; }
+    const prioridad = gruposOODA.slice().sort((a, b) => b.items.length - a.items.length)[0];
+
+    if (modoActual === 'completa') {
+      // Marca solo las secciones que aportan algo real ahora mismo, según los
+      // datos actuales — no una lista fija de checkboxes.
+      const relevantes = new Set(['resumen', 'conformidad']);
+      if (state.hallazgosPorAliado && state.hallazgosPorAliado.length) relevantes.add('aliados');
+      if (calcularTopFallas(1, state.actas).length) relevantes.add('topFallas');
+      relevantes.add('conclusiones');
+      cont.querySelectorAll('.chk-seccion-ppt').forEach(chk => { chk.checked = relevantes.has(chk.value); });
+      nota.textContent = `Marqué las secciones con datos relevantes ahora mismo (destaca: "${prioridad.titulo}").`;
+    } else if (modoActual === 'reducida') {
+      const hayAliadosRiesgo = state.hallazgosPorAliado && state.hallazgosPorAliado.length;
+      cont.querySelectorAll('.chk-tarjeta-ppt').forEach(chk => {
+        if (chk.value === 'noConformidad') chk.checked = true;
+        if (chk.value === 'porAliado') chk.checked = !!hayAliadosRiesgo;
+      });
+      nota.textContent = `Sugerido según tus datos actuales — lo más urgente es "${prioridad.titulo}" (${prioridad.items.length} caso(s)).`;
+    } else {
+      // Para la interactiva, se sugiere una consulta libre lista para agregar como diapositiva extra.
+      document.getElementById('pptConsultaLibre').value = prioridad.titulo.toLowerCase();
+      nota.textContent = `Sugerencia agregada al campo de arriba — puedes editarla antes de abrir la presentación.`;
+    }
+  });
+
   document.getElementById('btnGenerarPptConOpciones').addEventListener('click', (e) => {
     const desde = document.getElementById('pptFechaDesde').value;
     const hasta = document.getElementById('pptFechaHasta').value;
+    const consultaLibre = document.getElementById('pptConsultaLibre').value.trim();
     if (modoActual === 'interactiva') {
-      abrirPresentacionInteractiva(desde, hasta);
+      abrirPresentacionInteractiva(desde, hasta, consultaLibre);
     } else if (modoActual === 'reducida') {
       const tarjetas = {};
       cont.querySelectorAll('.chk-tarjeta-ppt').forEach(chk => { tarjetas[chk.value] = chk.checked; });
@@ -2479,6 +2518,9 @@ const CSS_PRESENTACION_EXPORTABLE = `
     background:linear-gradient(135deg, var(--purple-900), var(--purple-500) 70%, var(--orange-500)); color:white; }
   .slide-portada-marca { font-size:22px; font-weight:800; margin-bottom:40px; }
   .slide-portada-marca span { color:var(--orange-100); }
+  .slide-logo { position:absolute; top:24px; right:28px; width:130px; height:auto; }
+  .slide-logo-oscuro { background:white; border-radius:8px; padding:6px 10px; }
+  .slide-iconos-redes { position:absolute; bottom:20px; left:28px; height:18px; }
   .slide-portada h1 { font-size:46px; font-weight:800; margin:0 0 14px; }
   .slide-subtitulo { font-size:18px; margin:0 0 8px; opacity:0.92; }
   .slide-rango { font-size:12.5px; opacity:0.75; margin:0; }
@@ -2502,7 +2544,44 @@ const CSS_PRESENTACION_EXPORTABLE = `
   @media (max-width:900px){ .slide-cuerpo{grid-template-columns:1fr;} .presentacion-viewport{padding:16px 50px;} .slide-presentacion{padding:26px 22px;} }
 `;
 
-function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
+/**
+ * Versión simplificada del motor de "Buscar y graficar", pensada para
+ * agregar UNA diapositiva extra a la presentación interactiva a partir de
+ * texto libre (ej. "score por aliado", "no conformidad por mes"). Reutiliza
+ * los mismos catálogos (CAMPOS_GRAFICABLES, ESTADOS_RECONOCIDOS,
+ * CAMPOS_AGRUPABLES) para que reconozca las mismas frases. Devuelve
+ * { titulo, datos, esPromedio } o null si no reconoce nada.
+ */
+function interpretarConsultaLibre(texto) {
+  if (!texto) return null;
+  const q = texto.toLowerCase().trim();
+  const actasEnRango = state.actas;
+
+  const estadoInfo = ESTADOS_RECONOCIDOS.find(e => e.claves.some(k => q.includes(k)));
+  const agrupableInfo = CAMPOS_AGRUPABLES.find(c => c.claves.some(k => q.includes(k)));
+  const campoNumericoInfo = CAMPOS_GRAFICABLES.find(c => c.esNumerico && c.claves.some(k => q.includes(k)));
+  const campoInfo = CAMPOS_GRAFICABLES.find(c => c.claves.some(k => q.includes(k)));
+
+  if (campoNumericoInfo && agrupableInfo) {
+    const nombreEje = agrupableInfo.esTemporal ? 'mes' : agrupableInfo.campo;
+    const datos = agrupableInfo.esTemporal
+      ? agregarPorMes(actasEnRango, agrupableInfo.campo, campoNumericoInfo.campo)
+      : promedioPorCategoria(agrupableInfo.campo, campoNumericoInfo.campo, actasEnRango);
+    return { titulo: `${campoNumericoInfo.campo} promedio por ${nombreEje}`, datos, esPromedio: true };
+  }
+  if (estadoInfo && agrupableInfo) {
+    const filtradas = actasEnRango.filter(a => (a[estadoInfo.campo] || '').toString().toUpperCase() === estadoInfo.valor);
+    const nombreEje = agrupableInfo.esTemporal ? 'mes' : agrupableInfo.campo;
+    const datos = agrupableInfo.esTemporal ? agregarPorMes(filtradas, agrupableInfo.campo) : agregarPorCategoria(agrupableInfo.campo, filtradas);
+    return { titulo: `${estadoInfo.valor} por ${nombreEje}`, datos, esPromedio: false };
+  }
+  if (campoInfo) {
+    return { titulo: campoInfo.campo, datos: agregarPorCategoria(campoInfo.campo, actasEnRango), esPromedio: !!campoInfo.esNumerico };
+  }
+  return null;
+}
+
+function abrirPresentacionInteractiva(fechaDesde, fechaHasta, consultaLibre) {
   let actas = state.actas;
   if (fechaDesde || fechaHasta) {
     actas = actas.filter(a => {
@@ -2517,6 +2596,7 @@ function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
   const porMes = calcularTasaNCPorMes(actas);
   const topAliados = (k.porAliado || []).slice(0, 6);
   const rangoTexto = (fechaDesde || fechaHasta) ? `${fechaDesde || '…'} a ${fechaHasta || '…'}` : 'Todo el período disponible';
+  const extra = interpretarConsultaLibre(consultaLibre);
 
   let overlay = document.getElementById('overlayPresentacionInteractiva');
   if (!overlay) {
@@ -2540,13 +2620,14 @@ function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
       <div class="presentacion-slides" id="presentacionSlides">
 
         <section class="slide-presentacion slide-portada" data-slide="0">
-          <div class="slide-portada-marca">ener<span>Bit</span></div>
+          <img class="slide-logo slide-logo-oscuro" src="data:image/png;base64,${LOGO_ENERBIT_B64}" alt="enerBit">
           <h1 contenteditable="true">Auditoría CCE</h1>
           <p class="slide-subtitulo" contenteditable="true">Resumen ejecutivo de calidad — Programa CCE</p>
           <p class="slide-rango">${escapeHtml(rangoTexto)} · ${k.total} actas</p>
         </section>
 
         <section class="slide-presentacion" data-slide="1">
+          <img class="slide-logo" src="data:image/png;base64,${LOGO_ENERBIT_B64}" alt="enerBit">
           <div class="slide-cabecera">
             <span class="slide-icono">📈</span>
             <h2 contenteditable="true">Tasa de No Conformidad Manual, por mes</h2>
@@ -2559,9 +2640,11 @@ function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
             <div class="slide-tabla-wrap">${tablaHtmlSimple(porMes.map(m => ({ etiqueta: m.mes, valor: m.tasa.toFixed(1) + '%' })), 'Mes', 'Tasa NC')}</div>
           </div>
           <p class="slide-nota" contenteditable="true">${porMes.length ? `El promedio del período es ${(porMes.reduce((s, m) => s + m.tasa, 0) / porMes.length).toFixed(1)}%. Haz clic aquí para escribir tu propia conclusión.` : 'Sin datos suficientes en este rango — haz clic para escribir una nota.'}</p>
+          <img class="slide-iconos-redes" src="data:image/png;base64,${ICONOS_REDES_B64}" alt="">
         </section>
 
         <section class="slide-presentacion" data-slide="2">
+          <img class="slide-logo" src="data:image/png;base64,${LOGO_ENERBIT_B64}" alt="enerBit">
           <div class="slide-cabecera">
             <span class="slide-icono">⚠️</span>
             <h2 contenteditable="true">Aliados con mayor riesgo</h2>
@@ -2574,7 +2657,26 @@ function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
             <div class="slide-tabla-wrap">${tablaHtmlSimple(topAliados.map(a => ({ etiqueta: a.aliado, valor: (a.pctNC * 100).toFixed(1) + '%' })), 'Aliado', '% NC')}</div>
           </div>
           <p class="slide-nota" contenteditable="true">${topAliados.length ? `"${topAliados[topAliados.length - 1].aliado}" concentra el mayor riesgo. Haz clic aquí para escribir tu propia conclusión.` : 'Sin datos de aliados en este rango — haz clic para escribir una nota.'}</p>
+          <img class="slide-iconos-redes" src="data:image/png;base64,${ICONOS_REDES_B64}" alt="">
         </section>
+
+        ${extra ? `
+        <section class="slide-presentacion" data-slide="3">
+          <img class="slide-logo" src="data:image/png;base64,${LOGO_ENERBIT_B64}" alt="enerBit">
+          <div class="slide-cabecera">
+            <span class="slide-icono">✨</span>
+            <h2 contenteditable="true">${escapeHtml(extra.titulo)}</h2>
+          </div>
+          <div class="slide-cuerpo">
+            <div class="slide-grafica-wrap">
+              <div class="preferencia-opciones" id="picker_presExtra" style="margin-bottom:10px;"></div>
+              <div id="chart_presExtra" class="chart-svg-wrap"></div>
+            </div>
+            <div class="slide-tabla-wrap">${tablaHtmlSimple(extra.datos, 'Etiqueta', 'Valor')}</div>
+          </div>
+          <p class="slide-nota" contenteditable="true">Diapositiva agregada a partir de tu pedido: "${escapeHtml(consultaLibre)}". Haz clic aquí para escribir tu propia conclusión.</p>
+          <img class="slide-iconos-redes" src="data:image/png;base64,${ICONOS_REDES_B64}" alt="">
+        </section>` : ''}
 
       </div>
       <button type="button" class="presentacion-nav presentacion-nav-next" id="btnPresNext">›</button>
@@ -2584,6 +2686,9 @@ function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
 
   renderizarConSelectorTipo('picker_presNC', 'chart_presNC', porMes.map(m => ({ etiqueta: m.mes, valor: +m.tasa.toFixed(1) })), { modo: 'promedio', etiquetaCentro: '% nc' });
   renderizarConSelectorTipo('picker_presAliados', 'chart_presAliados', topAliados.map(a => ({ etiqueta: a.aliado, valor: +(a.pctNC * 100).toFixed(1) })), { modo: 'promedio', etiquetaCentro: '% nc' });
+  if (extra) {
+    renderizarConSelectorTipo('picker_presExtra', 'chart_presExtra', extra.datos, extra.esPromedio ? { modo: 'promedio' } : undefined);
+  }
 
   configurarNavegacionPresentacion(overlay);
   document.getElementById('btnPresCerrar').addEventListener('click', () => overlay.remove());
@@ -3160,13 +3265,12 @@ async function generarPowerPointReducido(tarjetas, fechaDesde, fechaHasta, btnUs
   };
 
   /**
-   * Caja de contenido con fondo blanco y borde naranja de 1.5pt — igual a la
-   * de la plantilla real (Shape 4 en slide2.xml). Todo el contenido de la
-   * tarjeta (gráfica, tabla, tarjetas de estado, nota) se dibuja DENTRO de
-   * esta caja, nunca fuera de ella.
+   * Caja de contenido con fondo blanco, sin borde — más limpia que el naranja
+   * de la plantilla original. Todo el contenido de la tarjeta (gráfica, tabla,
+   * tarjetas de estado, nota) se dibuja DENTRO de esta caja, nunca fuera.
    */
   const dibujarCajaContenido = (slide, x, y, w, h) => {
-    slide.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: 'FFFFFF' }, line: { color: ORANGE, width: 1.5 } });
+    slide.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: 'FFFFFF' }, line: { type: 'none' } });
   };
 
   /** Mini-tarjeta de estado con fondo tintado, como en el ejemplo (Promedio / Meta / etc.). */
