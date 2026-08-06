@@ -2385,6 +2385,10 @@ function renderOpcionesPowerPoint() {
     <div class="preferencia-opciones" style="margin-bottom:14px;">
       <button type="button" class="btn-opcion-grafica is-active" data-modo-ppt="completa">📽️ Completa</button>
       <button type="button" class="btn-opcion-grafica" data-modo-ppt="reducida">📇 Reducida (tarjetas)</button>
+      <button type="button" class="btn-opcion-grafica" data-modo-ppt="interactiva">🖥️ Interactiva (HTML editable)</button>
+    </div>
+    <div id="opcionesPptInteractiva" style="display:none;">
+      <p class="panel-note" style="margin:0 0 12px;">Abre una presentación en pantalla que puedes editar (títulos, notas, tipo de gráfica) antes de descargarla — en HTML o en PowerPoint, con el mismo contenido que hayas dejado.</p>
     </div>
     <div id="opcionesPptCompleta">
       <div class="preferencia-opciones" style="flex-direction:column; align-items:stretch; margin-bottom:12px;">
@@ -2421,6 +2425,8 @@ function renderOpcionesPowerPoint() {
       btn.classList.add('is-active');
       document.getElementById('opcionesPptCompleta').style.display = modoActual === 'completa' ? '' : 'none';
       document.getElementById('opcionesPptReducida').style.display = modoActual === 'reducida' ? '' : 'none';
+      document.getElementById('opcionesPptInteractiva').style.display = modoActual === 'interactiva' ? '' : 'none';
+      document.getElementById('btnGenerarPptConOpciones').textContent = modoActual === 'interactiva' ? '🖥️ Abrir presentación interactiva' : '📽️ Generar PowerPoint';
     });
   });
 
@@ -2428,7 +2434,9 @@ function renderOpcionesPowerPoint() {
   document.getElementById('btnGenerarPptConOpciones').addEventListener('click', (e) => {
     const desde = document.getElementById('pptFechaDesde').value;
     const hasta = document.getElementById('pptFechaHasta').value;
-    if (modoActual === 'reducida') {
+    if (modoActual === 'interactiva') {
+      abrirPresentacionInteractiva(desde, hasta);
+    } else if (modoActual === 'reducida') {
       const tarjetas = {};
       cont.querySelectorAll('.chk-tarjeta-ppt').forEach(chk => { tarjetas[chk.value] = chk.checked; });
       generarPowerPointReducido(tarjetas, desde, hasta, e.target);
@@ -2438,6 +2446,293 @@ function renderOpcionesPowerPoint() {
       generarPowerPoint(secciones, desde, hasta, e.target);
     }
   });
+}
+
+/**
+ * Presentación interactiva en pantalla, editable ANTES de descargar — títulos
+ * y notas son contenteditable, cada gráfica tiene su propio selector de tipo
+ * (reutiliza dibujarTipoGrafica, con tooltips nativos al pasar el mouse).
+ * Desde aquí se puede descargar como HTML autónomo o como PowerPoint, con el
+ * contenido exactamente como haya quedado editado en pantalla.
+ */
+/** CSS autosuficiente para el archivo HTML exportado — no depende de style.css
+ *  (que no viaja con el archivo), así que se ve igual al abrirlo en cualquier
+ *  computador, sin conexión a tu sitio. */
+const CSS_PRESENTACION_EXPORTABLE = `
+  :root { --purple-900:#3A1259; --purple-700:#5B1E8C; --purple-500:#7028AE; --purple-100:#F3E8FF;
+    --orange-500:#FF7900; --orange-100:#FFF1E0; --ink-900:#1A1F2B; --ink-700:#344055; --ink-500:#667085;
+    --ink-100:#F2F4F7; --canvas:#F3F2F1; --radius:12px;
+    --shadow-lg:0 16px 40px rgba(58,18,89,0.16),0 2px 6px rgba(58,18,89,0.06); --font-mono:'JetBrains Mono',monospace; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Inter, -apple-system, sans-serif;
+    background: linear-gradient(165deg, var(--purple-900), var(--purple-700) 55%, var(--purple-500)); }
+  .presentacion-viewport { display:flex; align-items:center; justify-content:center; position:relative; padding:20px 70px; }
+  .presentacion-nav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; border-radius:50%;
+    border:none; background:rgba(255,255,255,0.15); color:white; font-size:22px; cursor:pointer; }
+  .presentacion-nav:hover { background:rgba(255,255,255,0.3); }
+  .presentacion-nav-prev { left:16px; } .presentacion-nav-next { right:16px; }
+  .presentacion-slides { position:relative; width:100%; max-width:1000px; height:100%; }
+  .slide-presentacion { position:absolute; inset:0; display:none; flex-direction:column; background:white;
+    border-radius:var(--radius); padding:40px 48px; box-shadow:var(--shadow-lg); overflow-y:auto; }
+  .slide-presentacion.is-active { display:flex; }
+  .slide-portada { align-items:flex-start; justify-content:center;
+    background:linear-gradient(135deg, var(--purple-900), var(--purple-500) 70%, var(--orange-500)); color:white; }
+  .slide-portada-marca { font-size:22px; font-weight:800; margin-bottom:40px; }
+  .slide-portada-marca span { color:var(--orange-100); }
+  .slide-portada h1 { font-size:46px; font-weight:800; margin:0 0 14px; }
+  .slide-subtitulo { font-size:18px; margin:0 0 8px; opacity:0.92; }
+  .slide-rango { font-size:12.5px; opacity:0.75; margin:0; }
+  .slide-cabecera { display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+  .slide-icono { width:44px; height:44px; border-radius:12px; background:linear-gradient(135deg, var(--purple-500), var(--purple-700));
+    color:white; font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-lg); }
+  .slide-presentacion h2 { font-size:22px; font-weight:800; color:var(--ink-900); margin:0; flex:1; }
+  .slide-cuerpo { display:grid; grid-template-columns:1.3fr 1fr; gap:22px; flex:1; min-height:0; }
+  .slide-grafica-wrap, .slide-tabla-wrap { background:var(--canvas); border-radius:12px; padding:16px; box-shadow:inset 0 0 0 1px var(--ink-100); }
+  .slide-nota { margin:18px 0 0; padding:12px 16px; font-size:13px; color:var(--ink-700); background:var(--orange-100); border-radius:10px; }
+  .presentacion-puntos { display:flex; justify-content:center; gap:8px; padding:14px; }
+  .punto-presentacion { width:9px; height:9px; border-radius:50%; border:none; background:rgba(255,255,255,0.35); cursor:pointer; padding:0; }
+  .punto-presentacion.is-active { background:white; transform:scale(1.3); }
+  .data-table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  .data-table thead th { background:linear-gradient(135deg, var(--purple-700), var(--purple-500)); color:white; text-align:left; padding:9px 12px; }
+  .data-table tbody td { padding:8px 12px; border-bottom:1px solid var(--ink-100); color:var(--ink-700); }
+  .data-table tbody tr:nth-child(even) { background:var(--ink-100); }
+  .chart-svg-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .chart-svg-wrap svg { max-width:100%; }
+  .preferencia-opciones { display:none; } /* el selector de tipo no aplica en el archivo ya exportado */
+  @media (max-width:900px){ .slide-cuerpo{grid-template-columns:1fr;} .presentacion-viewport{padding:16px 50px;} .slide-presentacion{padding:26px 22px;} }
+`;
+
+function abrirPresentacionInteractiva(fechaDesde, fechaHasta) {
+  let actas = state.actas;
+  if (fechaDesde || fechaHasta) {
+    actas = actas.filter(a => {
+      const f = normalizarFechaCliente(a['Fecha']);
+      if (!f) return false;
+      if (fechaDesde && f < fechaDesde) return false;
+      if (fechaHasta && f > fechaHasta) return false;
+      return true;
+    });
+  }
+  const k = calcularKpisLocal(actas);
+  const porMes = calcularTasaNCPorMes(actas);
+  const topAliados = (k.porAliado || []).slice(0, 6);
+  const rangoTexto = (fechaDesde || fechaHasta) ? `${fechaDesde || '…'} a ${fechaHasta || '…'}` : 'Todo el período disponible';
+
+  let overlay = document.getElementById('overlayPresentacionInteractiva');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'overlayPresentacionInteractiva';
+    overlay.className = 'overlay-presentacion';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div class="presentacion-barra">
+      <span class="presentacion-barra-titulo">🖥️ Presentación interactiva — haz clic en cualquier texto para editarlo</span>
+      <div class="presentacion-barra-botones">
+        <button type="button" class="btn btn-ghost btn-icon" id="btnPresDescargarHtml">⬇️ Descargar HTML</button>
+        <button type="button" class="btn btn-primary btn-icon" id="btnPresDescargarPptx">⬇️ Descargar PowerPoint</button>
+        <button type="button" class="btn btn-ghost btn-icon" id="btnPresCerrar">✕ Cerrar</button>
+      </div>
+    </div>
+    <div class="presentacion-viewport">
+      <button type="button" class="presentacion-nav presentacion-nav-prev" id="btnPresPrev">‹</button>
+      <div class="presentacion-slides" id="presentacionSlides">
+
+        <section class="slide-presentacion slide-portada" data-slide="0">
+          <div class="slide-portada-marca">ener<span>Bit</span></div>
+          <h1 contenteditable="true">Auditoría CCE</h1>
+          <p class="slide-subtitulo" contenteditable="true">Resumen ejecutivo de calidad — Programa CCE</p>
+          <p class="slide-rango">${escapeHtml(rangoTexto)} · ${k.total} actas</p>
+        </section>
+
+        <section class="slide-presentacion" data-slide="1">
+          <div class="slide-cabecera">
+            <span class="slide-icono">📈</span>
+            <h2 contenteditable="true">Tasa de No Conformidad Manual, por mes</h2>
+          </div>
+          <div class="slide-cuerpo">
+            <div class="slide-grafica-wrap">
+              <div class="preferencia-opciones" id="picker_presNC" style="margin-bottom:10px;"></div>
+              <div id="chart_presNC" class="chart-svg-wrap"></div>
+            </div>
+            <div class="slide-tabla-wrap">${tablaHtmlSimple(porMes.map(m => ({ etiqueta: m.mes, valor: m.tasa.toFixed(1) + '%' })), 'Mes', 'Tasa NC')}</div>
+          </div>
+          <p class="slide-nota" contenteditable="true">${porMes.length ? `El promedio del período es ${(porMes.reduce((s, m) => s + m.tasa, 0) / porMes.length).toFixed(1)}%. Haz clic aquí para escribir tu propia conclusión.` : 'Sin datos suficientes en este rango — haz clic para escribir una nota.'}</p>
+        </section>
+
+        <section class="slide-presentacion" data-slide="2">
+          <div class="slide-cabecera">
+            <span class="slide-icono">⚠️</span>
+            <h2 contenteditable="true">Aliados con mayor riesgo</h2>
+          </div>
+          <div class="slide-cuerpo">
+            <div class="slide-grafica-wrap">
+              <div class="preferencia-opciones" id="picker_presAliados" style="margin-bottom:10px;"></div>
+              <div id="chart_presAliados" class="chart-svg-wrap"></div>
+            </div>
+            <div class="slide-tabla-wrap">${tablaHtmlSimple(topAliados.map(a => ({ etiqueta: a.aliado, valor: (a.pctNC * 100).toFixed(1) + '%' })), 'Aliado', '% NC')}</div>
+          </div>
+          <p class="slide-nota" contenteditable="true">${topAliados.length ? `"${topAliados[topAliados.length - 1].aliado}" concentra el mayor riesgo. Haz clic aquí para escribir tu propia conclusión.` : 'Sin datos de aliados en este rango — haz clic para escribir una nota.'}</p>
+        </section>
+
+      </div>
+      <button type="button" class="presentacion-nav presentacion-nav-next" id="btnPresNext">›</button>
+    </div>
+    <div class="presentacion-puntos" id="presentacionPuntos"></div>
+  `;
+
+  renderizarConSelectorTipo('picker_presNC', 'chart_presNC', porMes.map(m => ({ etiqueta: m.mes, valor: +m.tasa.toFixed(1) })), { modo: 'promedio', etiquetaCentro: '% nc' });
+  renderizarConSelectorTipo('picker_presAliados', 'chart_presAliados', topAliados.map(a => ({ etiqueta: a.aliado, valor: +(a.pctNC * 100).toFixed(1) })), { modo: 'promedio', etiquetaCentro: '% nc' });
+
+  configurarNavegacionPresentacion(overlay);
+  document.getElementById('btnPresCerrar').addEventListener('click', () => overlay.remove());
+  document.getElementById('btnPresDescargarHtml').addEventListener('click', () => descargarPresentacionComoHTML(overlay));
+  document.getElementById('btnPresDescargarPptx').addEventListener('click', (e) => descargarPresentacionComoPPTX(overlay, e.target));
+}
+
+/** Tabla simple de 2 columnas para acompañar cada gráfica de la presentación. */
+function tablaHtmlSimple(filas, colA, colB) {
+  if (!filas.length) return '<p class="panel-note">Sin datos.</p>';
+  return `<table class="data-table" style="width:100%;">
+    <thead><tr><th>${escapeHtml(colA)}</th><th style="text-align:right;">${escapeHtml(colB)}</th></tr></thead>
+    <tbody>${filas.map(f => `<tr><td>${escapeHtml(String(f.etiqueta))}</td><td style="text-align:right;font-family:var(--font-mono);">${escapeHtml(String(f.valor))}</td></tr>`).join('')}</tbody>
+  </table>`;
+}
+
+/** Navegación entre diapositivas: flechas, puntos, y teclado (← →). */
+function configurarNavegacionPresentacion(overlay) {
+  const slides = overlay.querySelectorAll('.slide-presentacion');
+  const puntos = overlay.querySelector('#presentacionPuntos');
+  let actual = 0;
+
+  puntos.innerHTML = Array.from(slides).map((_, i) => `<button type="button" class="punto-presentacion" data-ir="${i}"></button>`).join('');
+
+  const mostrar = (i) => {
+    actual = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((s, idx) => s.classList.toggle('is-active', idx === actual));
+    puntos.querySelectorAll('.punto-presentacion').forEach((p, idx) => p.classList.toggle('is-active', idx === actual));
+  };
+
+  overlay.querySelector('#btnPresPrev').addEventListener('click', () => mostrar(actual - 1));
+  overlay.querySelector('#btnPresNext').addEventListener('click', () => mostrar(actual + 1));
+  puntos.querySelectorAll('.punto-presentacion').forEach(p => p.addEventListener('click', () => mostrar(+p.dataset.ir)));
+
+  const onKey = (e) => {
+    if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey); return; }
+    if (document.activeElement && document.activeElement.isContentEditable) return; // no interferir mientras se escribe
+    if (e.key === 'ArrowRight') mostrar(actual + 1);
+    if (e.key === 'ArrowLeft') mostrar(actual - 1);
+  };
+  document.addEventListener('keydown', onKey);
+
+  mostrar(0);
+}
+
+/**
+ * Descarga la presentación como un archivo HTML autónomo — incluye el CSS
+ * necesario embebido (no depende de style.css externo) y conserva
+ * exactamente el texto que se haya editado en pantalla, incluyendo el tipo
+ * de gráfica que se haya elegido en cada selector.
+ */
+function descargarPresentacionComoHTML(overlay) {
+  const slidesHtml = overlay.querySelector('#presentacionSlides').outerHTML
+    .replace(/contenteditable="true"/g, ''); // ya no debe ser editable al abrir el archivo exportado
+
+  const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<title>Auditoría CCE — Presentación</title>
+<style>${CSS_PRESENTACION_EXPORTABLE}</style>
+</head><body>
+<div class="presentacion-viewport" style="height:100vh;">
+  <button type="button" class="presentacion-nav presentacion-nav-prev" onclick="irSlide(-1)">‹</button>
+  ${slidesHtml}
+  <button type="button" class="presentacion-nav presentacion-nav-next" onclick="irSlide(1)">›</button>
+</div>
+<div class="presentacion-puntos" id="presentacionPuntos"></div>
+<script>
+  const slides = document.querySelectorAll('.slide-presentacion');
+  const puntosCont = document.getElementById('presentacionPuntos');
+  puntosCont.innerHTML = Array.from(slides).map((_, i) => '<button onclick="irSlideDirecto(' + i + ')" class="punto-presentacion"></button>').join('');
+  let actual = 0;
+  function render() {
+    slides.forEach((s, i) => s.classList.toggle('is-active', i === actual));
+    puntosCont.querySelectorAll('.punto-presentacion').forEach((p, i) => p.classList.toggle('is-active', i === actual));
+  }
+  function irSlide(delta) { actual = Math.max(0, Math.min(slides.length - 1, actual + delta)); render(); }
+  function irSlideDirecto(i) { actual = i; render(); }
+  document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') irSlide(1); if (e.key === 'ArrowLeft') irSlide(-1); });
+  render();
+</script>
+</body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `Auditoria_CCE_presentacion_${new Date().toISOString().slice(0, 10)}.html`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  mostrarToast('Presentación HTML descargada.', 'success');
+}
+
+/**
+ * Descarga la misma presentación como PowerPoint, tomando el texto EDITADO en
+ * pantalla (títulos y notas) — reutiliza el mismo diseño de tarjeta real
+ * (logo, caja con borde naranja) que "Generar PowerPoint reducido".
+ */
+async function descargarPresentacionComoPPTX(overlay, btnUsado) {
+  if (typeof PptxGenJS === 'undefined') {
+    mostrarToast('No se pudo cargar la librería de PowerPoint. Revisa tu conexión e intenta de nuevo.', 'error');
+    return;
+  }
+  if (btnUsado) { btnUsado.disabled = true; btnUsado.textContent = 'Generando…'; }
+
+  const PURPLE = '501C7C', ORANGE = 'FF7900', GRIS_TEXTO = '667085', GRIS_BORDE = 'E4E7EC', TINTA = '1D2939';
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'CCE', width: 13.33, height: 7.5 });
+  pptx.layout = 'CCE';
+  pptx.title = 'Auditoría CCE — Presentación';
+
+  const slides = overlay.querySelectorAll('.slide-presentacion');
+
+  // --- Portada ---
+  const portada = slides[0];
+  let slide = pptx.addSlide();
+  slide.background = { color: PURPLE };
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 6.9, w: 13.33, h: 0.6, fill: { color: ORANGE }, line: { type: 'none' } });
+  slide.addImage({ data: 'image/png;base64,' + LOGO_ENERBIT_B64, x: 0.6, y: 0.55, w: 2.0, h: 0.75 });
+  slide.addText(portada.querySelector('h1').textContent, { x: 0.6, y: 2.8, w: 12.1, h: 1, fontSize: 40, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+  slide.addText(portada.querySelector('.slide-subtitulo').textContent, { x: 0.6, y: 3.7, w: 12.1, h: 0.5, fontSize: 16, color: 'E4D4F2', fontFace: 'Arial' });
+  slide.addText(portada.querySelector('.slide-rango').textContent, { x: 0.6, y: 4.2, w: 12.1, h: 0.4, fontSize: 11, color: 'C9AEDD', fontFace: 'Arial' });
+
+  // --- Diapositivas de contenido (1 y 2) ---
+  for (let i = 1; i < slides.length; i++) {
+    const s = slides[i];
+    const titulo = s.querySelector('h2').textContent;
+    const nota = s.querySelector('.slide-nota').textContent;
+    const filas = Array.from(s.querySelectorAll('tbody tr')).map(tr => Array.from(tr.children).map(td => td.textContent));
+    const encabezados = Array.from(s.querySelectorAll('thead th')).map(th => th.textContent);
+
+    slide = pptx.addSlide();
+    slide.background = { color: 'FFFFFF' };
+    slide.addShape(pptx.ShapeType.ellipse, { x: 0.5, y: 0.4, w: 0.4, h: 0.4, fill: { color: PURPLE }, line: { type: 'none' } });
+    slide.addText(String(i), { x: 0.5, y: 0.4, w: 0.4, h: 0.4, fontSize: 15, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'center', valign: 'middle' });
+    slide.addText(titulo, { x: 1.3, y: 0.28, w: 9.0, h: 0.5, fontSize: 22, bold: true, color: PURPLE, fontFace: 'Arial' });
+    slide.addShape(pptx.ShapeType.roundRect, { x: 1.3, y: 0.85, w: 1.5, h: 0.05, rectRadius: 0.03, fill: { color: ORANGE }, line: { type: 'none' } });
+
+    if (encabezados.length && filas.length) {
+      const filasTabla = [encabezados.map(h => ({ text: h, options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 11 } }))]
+        .concat(filas.map(fila => fila.map(v => ({ text: v, options: { fontSize: 11 } }))));
+      slide.addTable(filasTabla, { x: 8.2, y: 1.15, w: 4.7, h: 5.3, fontFace: 'Arial', border: { type: 'solid', color: GRIS_BORDE, pt: 1 } });
+    }
+    slide.addText(nota, { x: 0.5, y: 6.5, w: 12.3, h: 0.6, fontSize: 11, italic: true, color: GRIS_TEXTO, fontFace: 'Arial' });
+    slide.addImage({ data: 'image/png;base64,' + ICONOS_REDES_B64, x: 0.4, y: 7.1, w: 1.5, h: 0.21 });
+    slide.addImage({ data: 'image/png;base64,' + LOGO_ENERBIT_B64, x: 11.1, y: 6.95, w: 1.4, h: 0.5 });
+  }
+
+  await pptx.writeFile({ fileName: `Auditoria_CCE_presentacion_${new Date().toISOString().slice(0, 10)}.pptx` });
+  if (btnUsado) { btnUsado.disabled = false; btnUsado.textContent = '⬇️ Descargar PowerPoint'; }
+  mostrarToast('PowerPoint descargado.', 'success');
 }
 
 /**
