@@ -3897,6 +3897,14 @@ function configurarFiltros() {
     state.filtros.supervision = e.target.value;
     renderTablaDatos();
   });
+  document.getElementById('btnVerPendientes').addEventListener('click', () => {
+    // Reutiliza el mismo filtro que ya existe (Manual: PENDIENTE) — este botón
+    // es solo un atajo más visible, con contador, para llegar directo a la
+    // "bandeja de pendientes" sin tener que abrir el desplegable.
+    document.getElementById('filtroSupervision').value = 'PENDIENTE';
+    state.filtros.supervision = 'PENDIENTE';
+    renderTablaDatos();
+  });
   document.getElementById('filtroFechaDesde').addEventListener('change', e => {
     state.filtros.fechaDesde = e.target.value;
     renderTablaDatos();
@@ -4257,6 +4265,16 @@ function renderTablaDatos() {
   const columnas = obtenerColumnasVisibles();
   document.getElementById('datosSubtitle').textContent =
     filtradas.length + ' de ' + state.actas.length + ' actas mostradas';
+
+  // Contador en vivo de "🔔 Pendientes": se recalcula cada vez que se renderiza
+  // la tabla (al cargar, al filtrar, y después de guardar una acta editada) —
+  // así el número va bajando solo a medida que se completa la Supervisión
+  // Manual de cada una, sin tener que refrescar nada a mano.
+  const totalPendientes = state.actas.filter(a => (a['Supervisión Manual (T)'] || 'PENDIENTE') === 'PENDIENTE').length;
+  const btnPend = document.getElementById('btnVerPendientes');
+  const badgePend = document.getElementById('badgePendientes');
+  if (badgePend) badgePend.textContent = totalPendientes;
+  if (btnPend) btnPend.classList.toggle('sin-pendientes', totalPendientes === 0);
 
   const thead = document.querySelector('#tablaDatos thead');
   thead.innerHTML = '<tr>' + columnas.map(c => `<th>${c}</th>`).join('') + '<th>Acciones</th></tr>';

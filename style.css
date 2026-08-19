@@ -790,3 +790,17 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .presentacion-viewport { padding: 16px 50px; }
   .slide-presentacion { padding: 26px 22px; }
 }
+
+/* ============================================================================
+   BOTÓN "🔔 Pendientes" con contador en vivo (Datos completos)
+============================================================================ */
+.badge-contador {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px;
+  border-radius: 999px; background: var(--amber-700); color: white;
+  font-size: 11px; font-weight: 800; font-family: var(--font-mono);
+}
+/* Cuando ya no queda ninguna pendiente, el botón se ve "resuelto" — verde y
+   con el contador apagado, en vez del naranja/rojo de "hay que revisar algo". */
+#btnVerPendientes.sin-pendientes { border-color: var(--green-600); color: var(--green-600); }
+#btnVerPendientes.sin-pendientes .badge-contador { background: var(--green-600); }
