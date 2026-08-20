@@ -31,12 +31,12 @@ const CAMPOS_FORM = [
   { campo: 'Técnico', tipo: 'text', soloLectura: true },
   { campo: 'Serie Medidor', tipo: 'text', soloLectura: true },
   { campo: 'Tipo Medida', tipo: 'select', opciones: ['directa', 'semidirecta', 'indirecta'], soloLectura: true },
-  { campo: 'V. Servicio', tipo: 'number', soloLectura: true },
+  { campo: 'V. Servicio', tipo: 'number' },
   { campo: 'V. Alta Trafo', tipo: 'number', soloLectura: true },
   { campo: 'V. Baja Trafo', tipo: 'number', soloLectura: true },
   { campo: 'Factor acta (K)', tipo: 'number', soloLectura: true },
   { campo: 'Factor real (L)', tipo: 'text', placeholder: 'Número, o "OK" si coincide con Factor acta' },
-  { campo: 'R01 Tensión', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
+  { campo: 'R01 Tensión', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'] },
   { campo: 'R03 Formato', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
   { campo: 'R04 Foto Serial', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
   { campo: 'R05 Foto Sistema', tipo: 'select', opciones: ['OK', 'FALLA', 'PENDIENTE'], soloLectura: true },
@@ -1375,23 +1375,37 @@ function ejecutarDiagnostico() {
       detalle: `${a['Ciudad']} · Serie ${a['Serie Medidor']} · ${a['Tipo Medida']}` }))
   });
 
-  // Patrón conocido "indirecta con tensión digitada en baja" — esto NO se
-  // corrige solo (el valor real hay que confirmarlo con la foto), pero sí se
-  // le puede generar al aliado una nota lista para copiar y enviarle, para
+  // Patrón conocido "V. Servicio con el valor equivocado" — esto NO se
+  // corrige solo (el valor real hay que confirmarlo con la foto/PDF), pero sí
+  // se le puede generar al aliado una nota lista para copiar y enviarle, para
   // que no repita el mismo error de digitación en futuras actas.
+  // - En INDIRECTA: V. Servicio debe llevar la tensión por ALTA — si aparece
+  //   un valor bajo (<100), probablemente digitaron la de BAJA por error.
+  // - En SEMIDIRECTA: V. Servicio debe ser ≈ V. Baja Trafo/1000 (en kV) — si
+  //   en vez de eso quedó igual a V. Alta Trafo, probablemente se pisó con
+  //   ese valor durante la sincronización/digitación (mismo síntoma, causa
+  //   inversa). Confirmado en campo con el acta #109 (Cartagena, C3 Pronto).
   const patronVServicioBaja = state.actas.filter(a => {
     if ((a['R01 Tensión'] || '').toString().toUpperCase() !== 'FALLA') return false;
-    if ((a['Tipo Medida'] || '').toLowerCase() !== 'indirecta') return false;
+    const tipo = (a['Tipo Medida'] || '').toLowerCase();
     const vServ = parseFloat(a['V. Servicio']), vAlta = parseFloat(a['V. Alta Trafo']);
-    return !isNaN(vServ) && !isNaN(vAlta) && vServ < 100 && vAlta >= 1;
+    if (tipo === 'indirecta') return !isNaN(vServ) && !isNaN(vAlta) && vServ < 100 && vAlta >= 1;
+    if (tipo === 'semidirecta') return !isNaN(vServ) && !isNaN(vAlta) && Math.abs(vServ - vAlta) < 0.05;
+    return false;
   });
   if (patronVServicioBaja.length) grupos.push({
     titulo: 'Patrón de digitación — avisar al aliado (no se corrige solo)', icono: '📣', severidad: 'alta',
-    items: patronVServicioBaja.map(a => ({
-      id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']} (Técnico: ${a['Técnico'] || 'sin dato'})`,
-      detalle: `V. Servicio quedó en ${a['V. Servicio']} (parece ser la tensión de BAJA). En indirecta debe ir la tensión por ALTA (${a['V. Alta Trafo']}).`,
-      notaAliado: `Estimado equipo de ${a['Aliado']}: en el acta #${a['#']} (Serie ${a['Serie Medidor'] || 'N/D'}, técnico ${a['Técnico'] || 'N/D'}), la "Tensión del Servicio" quedó registrada en ${a['V. Servicio']}, que corresponde a la tensión por BAJA. Para medida indirecta, ese campo debe llevar la tensión por ALTA (en este caso ${a['V. Alta Trafo']}). Por favor verificar en campo y tenerlo en cuenta en las próximas instalaciones para evitar que se repita. Gracias.`
-    }))
+    items: patronVServicioBaja.map(a => {
+      const tipo = (a['Tipo Medida'] || '').toLowerCase();
+      const explicacion = tipo === 'indirecta'
+        ? `V. Servicio quedó en ${a['V. Servicio']} (parece ser la tensión de BAJA). En indirecta debe ir la tensión por ALTA (${a['V. Alta Trafo']}).`
+        : `V. Servicio quedó igual a V. Alta Trafo (${a['V. Servicio']}). En semidirecta debe ir la tensión por BAJA convertida a kV (≈ ${(parseFloat(a['V. Baja Trafo']) / 1000).toFixed(3)}).`;
+      return {
+        id: a['#'], texto: `Acta #${a['#']} — ${a['Aliado']} (Técnico: ${a['Técnico'] || 'sin dato'})`,
+        detalle: explicacion,
+        notaAliado: `Estimado equipo de ${a['Aliado']}: en el acta #${a['#']} (Serie ${a['Serie Medidor'] || 'N/D'}, técnico ${a['Técnico'] || 'N/D'}), la "Tensión del Servicio" quedó mal registrada. ${explicacion} Por favor verificar en campo y tenerlo en cuenta en las próximas instalaciones para evitar que se repita. Gracias.`
+      };
+    })
   });
 
   const r03 = state.actas.filter(a => {
@@ -4525,7 +4539,40 @@ function abrirModalActa(id) {
 
   conectarRetroalimentacionFactor(form);
   conectarAdvertenciaScore(form);
+  conectarRecalculoR01(form);
   abrirModal('modalActa');
+}
+
+/**
+ * Sugiere automáticamente el valor de "R01 Tensión" en cuanto se corrige
+ * "V. Servicio" (el campo que se ha visto llegar con el valor equivocado por
+ * un problema de sincronización — ver acta #109). No bloquea el campo: la
+ * persona puede seguir cambiándolo a mano si no está de acuerdo, esto solo
+ * evita que quede mostrando "FALLA" después de arreglar el número.
+ */
+function conectarRecalculoR01(form) {
+  const campoVServicio = form.querySelector('[name="V. Servicio"]');
+  const campoVAlta = form.querySelector('[name="V. Alta Trafo"]');
+  const campoVBaja = form.querySelector('[name="V. Baja Trafo"]');
+  const campoTipoMedida = form.querySelector('[name="Tipo Medida"]');
+  const campoR01 = form.querySelector('[name="R01 Tensión"]');
+  if (!campoVServicio || !campoR01) return;
+
+  campoVServicio.addEventListener('input', () => {
+    const tipo = (campoTipoMedida ? campoTipoMedida.value : '').toLowerCase();
+    const vServ = parseFloat(campoVServicio.value);
+    const vAlta = parseFloat(campoVAlta ? campoVAlta.value : '');
+    const vBaja = parseFloat(campoVBaja ? campoVBaja.value : '');
+    if (isNaN(vServ) || !tipo) return;
+
+    let nuevoValor = null;
+    if (tipo === 'indirecta' && !isNaN(vAlta)) {
+      nuevoValor = (vServ === vAlta) ? 'OK' : 'FALLA';
+    } else if ((tipo === 'directa' || tipo === 'semidirecta') && !isNaN(vBaja)) {
+      nuevoValor = (vServ < 100 && Math.abs(vServ - vBaja / 1000) <= 0.05) ? 'OK' : 'FALLA';
+    }
+    if (nuevoValor) campoR01.value = nuevoValor;
+  });
 }
 
 /**
