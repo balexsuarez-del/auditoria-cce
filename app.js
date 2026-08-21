@@ -2929,14 +2929,14 @@ async function descargarPresentacionComoPPTX(overlay, btnUsado) {
         const chartW = 5.2, chartX = 0.5, tableX = 6.0, tableW = 6.9;
         const nombreSerie = titulo.slice(0, 30);
         if (tipoGrafica === 'apilada') {
-          slide.addChart(pptx.ChartType.bar3D, [{ name: nombreSerie, labels: datos.map(d => d.etiqueta), values: datos.map(d => d.valor) }],
+          slide.addChart(pptx.ChartType.bar3d, [{ name: nombreSerie, labels: datos.map(d => d.etiqueta), values: datos.map(d => d.valor) }],
             { x: chartX, y: 1.2, w: chartW, h: 5.2, barDir: 'col', barGrouping: 'stacked', bar3DShape: 'box', chartColors: ['501C7C', 'FF7900', '12B76A', '2E90FA', 'D92D20'], showValue: true, dataLabelFontSize: 9 });
         } else if (tipoGrafica === 'linea') {
           slide.addChart(pptx.ChartType.line, [{ name: nombreSerie, labels: datos.map(d => d.etiqueta), values: datos.map(d => d.valor) }],
             { x: chartX, y: 1.2, w: chartW, h: 5.2, chartColors: [ORANGE], showValue: true, dataLabelFontSize: 9, lineSize: 2.5, lineSmooth: false });
         } else {
           // barras (default) y cascada (sin equivalente nativo, cae aquí)
-          slide.addChart(pptx.ChartType.bar3D, [{ name: nombreSerie, labels: datos.map(d => d.etiqueta), values: datos.map(d => d.valor) }],
+          slide.addChart(pptx.ChartType.bar3d, [{ name: nombreSerie, labels: datos.map(d => d.etiqueta), values: datos.map(d => d.valor) }],
             { x: chartX, y: 1.2, w: chartW, h: 5.2, barDir: 'bar', bar3DShape: 'box', chartColors: [PURPLE], showValue: true, dataLabelFontSize: 9 });
         }
         const filasTabla = [encabezados.map(h => ({ text: h, options: { bold: true, fill: { color: PURPLE }, color: 'FFFFFF', fontSize: 11 } }))]
@@ -3331,7 +3331,7 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
     slide = nuevaSlideClara();
     tituloSlide(slide, 4, '🏗️ Conformidad por aliado (% no conformidad)');
     const ordenAsc = k.porAliado.slice().sort((a, b) => a.pctNC - b.pctNC); // mejor primero para el chart de abajo a arriba
-    slide.addChart(pptx.ChartType.bar3D, [{
+    slide.addChart(pptx.ChartType.bar3d, [{
       name: '% NC',
       labels: ordenAsc.map(a => a.aliado),
       values: ordenAsc.map(a => +(a.pctNC * 100).toFixed(1))
@@ -3350,7 +3350,7 @@ async function generarPowerPoint(secciones, fechaDesde, fechaHasta, btnUsado) {
   if (secciones.topFallas && topFallas.length) {
     slide = nuevaSlideClara();
     tituloSlide(slide, 5, '🔎 Top de fallas más comunes');
-    slide.addChart(pptx.ChartType.bar3D, [{
+    slide.addChart(pptx.ChartType.bar3d, [{
       name: 'Fallas',
       labels: topFallas.map(f => f.etiqueta),
       values: topFallas.map(f => f.valor)
@@ -3596,7 +3596,7 @@ async function generarPowerPointReducido(tarjetas, fechaDesde, fechaHasta, btnUs
 
     if (porMes.length) {
       const chartW = innerW * 0.53, tableX = innerX + chartW + 0.3, tableW = innerW - chartW - 0.3;
-      slide.addChart(pptx.ChartType.bar3D, [{
+      slide.addChart(pptx.ChartType.bar3d, [{
         name: 'Tasa NC %', labels: porMes.map(m => m.mes), values: porMes.map(m => +m.tasa.toFixed(1))
       }], { x: innerX, y: yContenido, w: chartW, h: contenidoH, bar3DShape: 'box', chartColors: [ORANGE], showValue: true, valAxisTitle: '% no conformidad', catAxisTitle: 'Mes' });
 
@@ -3655,7 +3655,7 @@ async function generarPowerPointReducido(tarjetas, fechaDesde, fechaHasta, btnUs
     const chartW = innerW * 0.53, tableX = innerX + chartW + 0.3, tableW = innerW - chartW - 0.3;
 
     const top5 = k.porAliado.slice(0, 5);
-    slide.addChart(pptx.ChartType.bar3D, [{
+    slide.addChart(pptx.ChartType.bar3d, [{
       name: '% NC', labels: top5.map(a => a.aliado), values: top5.map(a => +(a.pctNC * 100).toFixed(1))
     }], { x: innerX, y: yContenido, w: chartW, h: contenidoH, barDir: 'bar', bar3DShape: 'box', chartColors: [RED], showValue: true, valAxisTitle: '% no conformidad' });
 
