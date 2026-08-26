@@ -4434,6 +4434,23 @@ function configurarFiltros() {
   configurarImportacionExcel();
 }
 
+/**
+ * Descarga TODAS las actas cargadas ahora mismo (state.actas, con las mismas
+ * columnas que ves en pantalla) como un archivo Excel — un respaldo local en
+ * tu computador, independiente de Google Sheets. No sube ni cambia nada, solo
+ * descarga una copia de lo que ya está en pantalla en este momento.
+ */
+function exportarDatosCompletosComoRespaldo() {
+  if (!state.actas || !state.actas.length) { mostrarToast('No hay datos cargados todavía para respaldar.', 'error'); return; }
+  const columnas = state.headers && state.headers.length ? state.headers : Object.keys(state.actas[0]);
+  const hoja = XLSX.utils.json_to_sheet(state.actas, { header: columnas });
+  const libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, hoja, 'Datos completos');
+  const fecha = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(libro, `Respaldo_Datos_completos_CCE_${fecha}.xlsx`);
+  mostrarToast('Respaldo descargado — guárdalo en tu computador.', 'success');
+}
+
 // ============================================================================
 // IMPORTAR DESDE EXCEL (.xlsx) — lee el archivo en el navegador con SheetJS,
 // hace match con la hoja "Datos Completos" y sincroniza (upsert) por "#".
@@ -4441,6 +4458,8 @@ function configurarFiltros() {
 function configurarImportacionExcel() {
   const btn = document.getElementById('btnImportarExcel');
   const input = document.getElementById('inputExcel');
+  const btnExportar = document.getElementById('btnExportarDatosCompletos');
+  if (btnExportar) btnExportar.addEventListener('click', exportarDatosCompletosComoRespaldo);
 
   btn.addEventListener('click', () => input.click());
   input.addEventListener('change', async (e) => {
