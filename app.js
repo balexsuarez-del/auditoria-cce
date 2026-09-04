@@ -3368,8 +3368,16 @@ function generarTexturaPuntos(colorPunto) {
   }
   return canvas.toDataURL('image/png').split(',')[1];
 }
-const TEXTURA_PUNTOS_CLAROS = generarTexturaPuntos('rgba(255,255,255,0.16)');
-const TEXTURA_PUNTOS_OSCUROS = generarTexturaPuntos('rgba(80,28,124,0.14)');
+// Antes esto se calculaba SIEMPRE al cargar la página (2 imágenes de 1333x750
+// con ~500 puntos dibujados a mano cada una), aunque el 99% de las veces
+// nadie iba a generar un PowerPoint en esa visita. Ahora solo se calcula la
+// primera vez que de verdad se usa (dentro de dibujarPortadaMorada/
+// dibujarDivisorNaranja), y se guarda en caché para no repetirlo dos veces.
+let _texturaPuntosClarosCache = null;
+function obtenerTexturaPuntosClaros() {
+  if (!_texturaPuntosClarosCache) _texturaPuntosClarosCache = generarTexturaPuntos('rgba(255,255,255,0.16)');
+  return _texturaPuntosClarosCache;
+}
 
 /**
  * PLANTILLA MAESTRA 1 — Portada morada. Para la carátula de la presentación
@@ -3378,7 +3386,7 @@ const TEXTURA_PUNTOS_OSCUROS = generarTexturaPuntos('rgba(80,28,124,0.14)');
 function dibujarPortadaMorada(pptx, titulo, subtitulo1, subtitulo2) {
   const slide = pptx.addSlide();
   slide.background = { color: '501C7C' };
-  slide.addImage({ data: 'image/png;base64,' + TEXTURA_PUNTOS_CLAROS, x: 0, y: 0, w: 13.33, h: 7.5 });
+  slide.addImage({ data: 'image/png;base64,' + obtenerTexturaPuntosClaros(), x: 0, y: 0, w: 13.33, h: 7.5 });
   slide.addText([
     { text: 'LO IMPOSIBLE\n', options: { strike: false } },
     { text: 'LO VOLVEMOS POSIBLE', options: { bold: true } }
@@ -3398,7 +3406,7 @@ function dibujarPortadaMorada(pptx, titulo, subtitulo1, subtitulo2) {
 function dibujarDivisorNaranja(pptx, tituloSeccion) {
   const slide = pptx.addSlide();
   slide.background = { color: 'FF7900' };
-  slide.addImage({ data: 'image/png;base64,' + TEXTURA_PUNTOS_CLAROS, x: 0, y: 0, w: 13.33, h: 7.5 });
+  slide.addImage({ data: 'image/png;base64,' + obtenerTexturaPuntosClaros(), x: 0, y: 0, w: 13.33, h: 7.5 });
   slide.addText('enerBit', { x: 10.3, y: 0.4, w: 2.4, h: 0.5, fontSize: 26, bold: true, color: 'FFFFFF', fontFace: 'Arial', align: 'right' });
   slide.addText('Con el respaldo de Celsia', { x: 10.3, y: 0.82, w: 2.4, h: 0.25, fontSize: 8, color: 'FFE0B8', fontFace: 'Arial', align: 'right' });
   slide.addShape(pptx.ShapeType.roundRect, { x: 9.6, y: 1.3, w: 3.1, h: 0.85, rectRadius: 0.15, fill: { color: '501C7C' }, line: { type: 'none' } });
